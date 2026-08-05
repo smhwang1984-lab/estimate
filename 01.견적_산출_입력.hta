@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>견적 산출 입력</title>
+    <hta:application
+        applicationname="EstimateInputFrame"
+        scroll="yes"
+        singleinstance="yes"
+        windowstate="normal">
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0;
+            padding: 0;
+            min-width: 1320px;
+            min-height: 760px;
+            background: #111827;
+            color: #e5e7eb;
+            font-family: "Malgun Gothic", Arial, sans-serif;
+            font-size: 13px;
+        }
+        body { overflow: auto; }
+        .app {
+            padding: 14px;
+        }
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 14px;
+            border: 1px solid #334155;
+            background: #182235;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+        .title {
+            font-size: 20px;
+            font-weight: 900;
+            color: #bfdbfe;
+        }
+        .subtitle {
+            margin-top: 3px;
+            font-size: 12px;
+            color: #93c5fd;
+            font-weight: 700;
+        }
+        .actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        button {
+            height: 34px;
+            padding: 0 14px;
+            border: 1px solid #475569;
+            border-radius: 5px;
+            background: #243348;
+            color: #e5e7eb;
+            font-weight: 800;
+            cursor: pointer;
+        }
+        button.primary {
+            background: #2563eb;
+            border-color: #3b82f6;
+            color: white;
+        }
+        button.warn {
+            background: #7c2d12;
+            border-color: #ea580c;
+        }
+        .section {
+            border: 1px solid #334155;
+            background: #172033;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+        .section-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 9px 12px;
+            border-bottom: 1px solid #334155;
+            background: #1f2a3d;
+            font-weight: 900;
+            color: #dbeafe;
+        }
+        .section-body {
+            padding: 10px 12px;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px 12px;
+        }
+        .field label {
+            display: block;
+            margin-bottom: 4px;
+            color: #cbd5e1;
+            font-size: 12px;
+            font-weight: 800;
+        }
+        input, select, textarea {
+            width: 100%;
+            height: 32px;
+            border: 1px solid #475569;
+            border-radius: 4px;
+            background: #f8fafc;
+            color: #0f172a;
+            font-family: "Malgun Gothic", Arial, sans-serif;
+            font-weight: 700;
+            padding: 5px 7px;
+        }
+        textarea {
+            height: 32px;
+            resize: vertical;
+        }
+        input.num {
+            text-align: right;
+        }
+        input.readonly {
+            background: #334155;
+            color: #cbd5e1;
+            border-color: #1f2937;
+        }
+        .rate-grid {
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            gap: 8px;
+        }
+        .table-wrap {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        th, td {
+            border: 1px solid #334155;
+            padding: 4px;
+            vertical-align: middle;
+        }
+        th {
+            background: #243348;
+            color: #dbeafe;
+            font-size: 12px;
+            height: 34px;
+            white-space: nowrap;
+        }
+        td {
+            background: #111c2e;
+        }
+        .item-table input,
+        .item-table select {
+            height: 30px;
+            font-size: 12px;
+            padding: 4px 5px;
+        }
+        .col-no { width: 44px; text-align: center; }
+        .col-part { width: 130px; }
+        .col-name { width: 170px; }
+        .col-comment { width: 150px; }
+        .col-ok { width: 82px; }
+        .col-qty { width: 64px; }
+        .col-mat { width: 120px; }
+        .col-size { width: 140px; }
+        .col-proc { width: 82px; }
+        .col-sum { width: 92px; }
+        .col-money { width: 110px; }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1.8fr;
+            gap: 10px;
+        }
+        .total-box {
+            min-height: 150px;
+            padding: 12px;
+            border: 1px solid #334155;
+            background: #0f172a;
+            border-radius: 6px;
+        }
+        .total-label {
+            color: #93c5fd;
+            font-size: 13px;
+            font-weight: 900;
+        }
+        .total-value {
+            margin-top: 8px;
+            font-size: 28px;
+            font-weight: 900;
+            color: #facc15;
+            text-align: right;
+        }
+        .preview-table th {
+            background: #1e293b;
+        }
+        .preview-empty {
+            color: #64748b;
+            text-align: center;
+            font-weight: 800;
+        }
+        .note {
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+<div class="app">
+    <div class="topbar">
+        <div>
+            <div class="title">견적 산출 입력</div>
+            <div class="subtitle">기준 양식: 견적_산정\양식\견적용.xlsx / 기계 시트 입력 구조</div>
+        </div>
+        <div class="actions">
+            <button class="primary" onclick="refreshPreview()">미리보기 갱신</button>
+            <button onclick="clearItemRows()">품목 초기화</button>
+            <button class="warn" onclick="clearAllInputs()">전체 초기화</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
+            <span>견적 기본정보</span>
+            <span class="note">견적서 시트 상단 입력 항목</span>
+        </div>
+        <div class="section-body">
+            <div class="form-grid">
+                <div class="field">
+                    <label>견적일</label>
+                    <input type="text" id="quoteDate" value="" placeholder="YYYY-MM-DD">
+                </div>
+                <div class="field">
+                    <label>대상 회사명</label>
+                    <input type="text" id="customerCompany" value="" placeholder="회사명">
+                </div>
+                <div class="field">
+                    <label>대상 담당자</label>
+                    <input type="text" id="customerPerson" value="" placeholder="담당자 / 직위">
+                </div>
+                <div class="field">
+                    <label>대상 부서</label>
+                    <input type="text" id="customerDept" value="" placeholder="구매팀">
+                </div>
+                <div class="field">
+                    <label>사업명</label>
+                    <input type="text" id="projectName" value="" placeholder="사업명">
+                </div>
+                <div class="field">
+                    <label>작성 회사</label>
+                    <input type="text" id="makerCompany" value="㈜텍스타">
+                </div>
+                <div class="field">
+                    <label>작성 담당자</label>
+                    <input type="text" id="makerPerson" value="생산부장 황 성문">
+                </div>
+                <div class="field">
+                    <label>비고</label>
+                    <input type="text" id="quoteMemo" value="" placeholder="coment">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
+            <span>공정별 기준 단가</span>
+            <span class="note">기계 시트 K5:T5 기준</span>
+        </div>
+        <div class="section-body">
+            <div class="rate-grid">
+                <div class="field"><label>5축 NC</label><input class="num rate" type="text" id="rate5axis" value="70000"></div>
+                <div class="field"><label>4축</label><input class="num rate" type="text" id="rate4axis" value="50000"></div>
+                <div class="field"><label>3축 NC</label><input class="num rate" type="text" id="rate3axis" value="40000"></div>
+                <div class="field"><label>NC 선반</label><input class="num rate" type="text" id="rateLathe" value="35000"></div>
+                <div class="field"><label>범용</label><input class="num rate" type="text" id="rateManual" value="20000"></div>
+                <div class="field"><label>사상</label><input class="num rate" type="text" id="rateFinish" value="15600"></div>
+                <div class="field"><label>CMM</label><input class="num rate" type="text" id="rateCmm" value="30000"></div>
+                <div class="field"><label>연삭/와이어</label><input class="num rate" type="text" id="rateGrindWire" value="35000"></div>
+                <div class="field"><label>치구</label><input class="num rate" type="text" id="rateJig" value="35000"></div>
+                <div class="field"><label>프로그램</label><input class="num rate" type="text" id="rateProgram" value="35000"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
+            <span>품목 입력</span>
+            <span class="note">기계 시트 A7:W13 기준 7개 행</span>
+        </div>
+        <div class="section-body">
+            <div class="table-wrap">
+                <table class="item-table">
+                    <thead>
+                    <tr>
+                        <th class="col-no">NO</th>
+                        <th class="col-part">품번</th>
+                        <th class="col-name">품명</th>
+                        <th class="col-comment">Coment</th>
+                        <th class="col-ok">가능여부</th>
+                        <th class="col-qty">Qty</th>
+                        <th class="col-mat">Material</th>
+                        <th class="col-size">Size</th>
+                        <th class="col-proc">5축 NC</th>
+                        <th class="col-proc">4축</th>
+                        <th class="col-proc">3축 NC</th>
+                        <th class="col-proc">NC 선반</th>
+                        <th class="col-proc">범용</th>
+                        <th class="col-proc">사상</th>
+                        <th class="col-proc">CMM</th>
+                        <th class="col-proc">연삭/와이어</th>
+                        <th class="col-proc">치구</th>
+                        <th class="col-proc">프로그램</th>
+                        <th class="col-sum">공정 합계</th>
+                        <th class="col-money">산출금액</th>
+                        <th class="col-money">견적단가</th>
+                    </tr>
+                    </thead>
+                    <tbody id="itemBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
+            <span>견적서 미리보기</span>
+            <span class="note">견적서 시트 품번 / 품명 / 견적 단가 영역</span>
+        </div>
+        <div class="section-body">
+            <div class="summary-grid">
+                <div class="total-box">
+                    <div class="total-label">총 견적금액</div>
+                    <div class="total-value" id="totalAmount">계산 후 연결</div>
+                    <div class="note" style="margin-top: 16px;">산출 방식과 계산 방식은 다음 단계에서 연결 예정</div>
+                </div>
+                <div class="table-wrap">
+                    <table class="preview-table">
+                        <thead>
+                        <tr>
+                            <th style="width: 56px;">No</th>
+                            <th>품번</th>
+                            <th>품명</th>
+                            <th style="width: 130px;">견적 단가</th>
+                        </tr>
+                        </thead>
+                        <tbody id="previewBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    var processIds = [
+        "p5axis", "p4axis", "p3axis", "pLathe", "pManual",
+        "pFinish", "pCmm", "pGrindWire", "pJig", "pProgram"
+    ];
+
+    function pad2(n) {
+        return n < 10 ? "0" + n : "" + n;
+    }
+
+    function setToday() {
+        var el = document.getElementById("quoteDate");
+        if (!el || el.value) return;
+        var d = new Date();
+        el.value = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+    }
+
+    function makeInput(id, cls, value, placeholder) {
+        return "<input type='text' id='" + id + "' class='" + cls + "' value='" + (value || "") + "' placeholder='" + (placeholder || "") + "' onkeyup='refreshPreview()'>";
+    }
+
+    function makeRow(rowNo) {
+        var html = "";
+        html += "<tr data-row='" + rowNo + "'>";
+        html += "<td class='col-no'>" + rowNo + "</td>";
+        html += "<td>" + makeInput("partNo" + rowNo, "", "", "품번") + "</td>";
+        html += "<td>" + makeInput("partName" + rowNo, "", "", "품명") + "</td>";
+        html += "<td>" + makeInput("comment" + rowNo, "", "", "Coment") + "</td>";
+        html += "<td><select id='available" + rowNo + "' onchange='refreshPreview()'><option value=''>선택</option><option>가능</option><option>협의</option><option>불가</option></select></td>";
+        html += "<td>" + makeInput("qty" + rowNo, "num", "1", "Qty") + "</td>";
+        html += "<td>" + makeInput("material" + rowNo, "", "", "Material") + "</td>";
+        html += "<td>" + makeInput("size" + rowNo, "", "", "Size") + "</td>";
+        for (var i = 0; i < processIds.length; i++) {
+            html += "<td>" + makeInput(processIds[i] + rowNo, "num", "", "") + "</td>";
+        }
+        html += "<td><input type='text' id='processSum" + rowNo + "' class='num readonly' value='' readonly></td>";
+        html += "<td><input type='text' id='calcAmount" + rowNo + "' class='num readonly' value='' readonly></td>";
+        html += "<td><input type='text' id='quoteUnit" + rowNo + "' class='num readonly' value='' readonly></td>";
+        html += "</tr>";
+        return html;
+    }
+
+    function buildRows() {
+        var body = document.getElementById("itemBody");
+        var html = "";
+        for (var i = 1; i <= 7; i++) html += makeRow(i);
+        body.innerHTML = html;
+    }
+
+    function valueOf(id) {
+        var el = document.getElementById(id);
+        return el ? el.value : "";
+    }
+
+    function refreshPreview() {
+        var body = document.getElementById("previewBody");
+        var html = "";
+        var count = 0;
+        for (var i = 1; i <= 7; i++) {
+            var partNo = valueOf("partNo" + i);
+            var partName = valueOf("partName" + i);
+            var unit = valueOf("quoteUnit" + i);
+            if (partNo || partName || unit) {
+                count++;
+                html += "<tr>";
+                html += "<td style='text-align:center;'>" + i + "</td>";
+                html += "<td>" + partNo + "</td>";
+                html += "<td>" + partName + "</td>";
+                html += "<td style='text-align:right;'>" + unit + "</td>";
+                html += "</tr>";
+            }
+        }
+        if (count === 0) {
+            html = "<tr><td colspan='4' class='preview-empty'>입력된 품목 없음</td></tr>";
+        }
+        body.innerHTML = html;
+    }
+
+    function clearItemRows() {
+        if (!confirm("품목 입력값을 초기화할까요?")) return;
+        for (var i = 1; i <= 7; i++) {
+            var ids = ["partNo", "partName", "comment", "qty", "material", "size", "processSum", "calcAmount", "quoteUnit"];
+            for (var j = 0; j < ids.length; j++) {
+                var el = document.getElementById(ids[j] + i);
+                if (el) el.value = ids[j] === "qty" ? "1" : "";
+            }
+            var av = document.getElementById("available" + i);
+            if (av) av.selectedIndex = 0;
+            for (var k = 0; k < processIds.length; k++) {
+                var proc = document.getElementById(processIds[k] + i);
+                if (proc) proc.value = "";
+            }
+        }
+        refreshPreview();
+    }
+
+    function clearAllInputs() {
+        if (!confirm("전체 입력값을 초기화할까요?")) return;
+        var inputs = document.getElementsByTagName("input");
+        for (var i = 0; i < inputs.length; i++) {
+            if (inputs[i].className.indexOf("rate") >= 0) continue;
+            if (inputs[i].id.indexOf("qty") === 0) inputs[i].value = "1";
+            else inputs[i].value = "";
+        }
+        var selects = document.getElementsByTagName("select");
+        for (var j = 0; j < selects.length; j++) selects[j].selectedIndex = 0;
+        setToday();
+        refreshPreview();
+    }
+
+    function bindFocusSelect() {
+        var inputs = document.getElementsByTagName("input");
+        for (var i = 0; i < inputs.length; i++) {
+            inputs[i].onfocus = function() {
+                var self = this;
+                setTimeout(function() { self.select(); }, 20);
+            };
+        }
+    }
+
+    function initApp() {
+        buildRows();
+        setToday();
+        bindFocusSelect();
+        refreshPreview();
+    }
+
+    window.onload = initApp;
+</script>
+</body>
+</html>

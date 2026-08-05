@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>CNC 선반 가공 조건 산출기 (CSS 대응)</title>
+    <hta:application
+        applicationname="CNCLatheCalcV2"
+        scroll="no"
+        singleinstance="yes"
+        windowstate="normal">
+    <style>
+        * { box-sizing: border-box; }
+        body, html {
+            background-color: #121824; color: #e2e8f0;
+            font-family: 'Malgun Gothic', sans-serif;
+            margin: 0; padding: 0; overflow: hidden;
+            width: 100vw; height: 100vh;
+        }
+        #mainContainer {
+            position: absolute; left: 0; top: 0;
+            transform-origin: top left; -ms-transform-origin: top left;
+            padding: 14px;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+        }
+
+        /* ── 타이틀 배너 ── */
+        .title-bar {
+            flex: 0 0 auto; margin-bottom: 10px;
+            background: linear-gradient(90deg, #1e3a5f 0%, #1e2d45 50%, #1e3a5f 100%);
+            border: 1px solid #3d6a9a; border-radius: 7px;
+            padding: 11px 20px; text-align: center;
+        }
+        .title-bar .t-main {
+            font-size: 18px; font-weight: 900; color: #93c5fd;
+            letter-spacing: 1px;
+        }
+        .title-bar .t-sub {
+            font-size: 12px; color: #67e8f9; margin-top: 3px;
+            font-weight: 600; letter-spacing: 0.5px;
+        }
+
+        /* ── 레이아웃 ── */
+        .main-layout {
+            flex: 1 1 auto;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: row; flex-direction: row;
+        }
+        .left-panel {
+            width: 40%;
+            padding-right: 14px;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+        }
+        .right-panel {
+            width: 60%;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+        }
+
+        /* ── 입력 그룹 ── */
+        .input-group {
+            display: -ms-flexbox; display: flex;
+            -ms-flex-align: center; align-items: center;
+            margin-bottom: 5px; padding: 5px 12px;
+            border-radius: 6px; flex: 1; min-height: 48px;
+        }
+        .bg-dark-1 { background-color: #1e2d45; border: 1px solid #3d5a80; }
+        .bg-dark-2 { background-color: #0d1b2e; border: 1px solid #1e3a5f; }
+        .bg-sep    { background-color: #1a2a3a; border: 1px solid #2a4a6a; border-top: 2px solid #3d6a9a; }
+
+        .input-group label {
+            width: 52%; font-weight: 700;
+            font-size: 14.5px; line-height: 1.35; color: #e0eeff;
+        }
+        /* 그룹별 라벨 색상 */
+        .lbl-mat   { color: #e0eeff !important; }
+        .lbl-dim   { color: #86efac !important; }   /* 연두 - 치수 */
+        .lbl-cut   { color: #93c5fd !important; }   /* 하늘 - 절삭 */
+        .lbl-feed  { color: #fde68a !important; }   /* 노랑 - 이송/절입 */
+        .lbl-size  { color: #86efac !important; }   /* 연두 - 길이 */
+        .lbl-power { color: #fca5a5 !important; }   /* 연적 - 동력 */
+
+        .input-wrap { width: 48%; }
+
+        input, select {
+            width: 100%; padding: 4px 6px;
+            border: 2px solid #4a6fa5; border-radius: 5px;
+            background: #f8faff; font-weight: 700;
+            font-size: 16px; text-align: center;
+            height: 38px; color: #0a1628;
+        }
+        select { text-align: left; padding-left: 8px; font-size: 14px; }
+
+        input.sfm-input  { background: #fffbeb !important; color: #92400e !important; border: 2px solid #d97706 !important; font-size: 17px !important; font-weight: 800 !important; }
+        .bg-sfm { background-color: #1a1500 !important; border: 1px solid #5a4a10 !important; }
+        .lbl-sfm { color: #fcd34d !important; }
+
+        input.key-input  { background: #fef08a !important; color: #7c1d0a !important; border: 2px solid #b45309 !important; font-size: 17px !important; font-weight: 900 !important; }
+        input.power-input{ background: #fef9c3 !important; color: #713f12 !important; border: 2px solid #ca8a04 !important; font-size: 17px !important; font-weight: 900 !important; }
+        input.error-input{ background: #fee2e2 !important; color: #991b1b !important; border: 2px solid #ef4444 !important; }
+        input:disabled, select:disabled { background: #334155 !important; color: #64748b !important; border: 2px solid #1e293b !important; cursor: not-allowed; }
+        input:focus, select:focus { border-color: #38bdf8 !important; outline: none; }
+
+        /* ★ 인서트 추천 재종 박스 */
+        .insert-grade-box {
+            flex: 0 0 auto; margin-bottom: 8px; padding: 9px 14px;
+            background: #06101a; border: 1px solid #1e3a5f;
+            border-left: 6px solid #38bdf8; border-radius: 7px;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-align: center; align-items: center;
+            -ms-flex-wrap: wrap; flex-wrap: wrap;
+            gap: 0;
+        }
+        .ig-label { font-size: 11px; color: #2a4060; font-weight: 700; margin-right: 10px; white-space: nowrap; }
+        .ig-grade { font-size: 20px; font-weight: 900; color: #38bdf8; margin-right: 12px; white-space: nowrap; }
+        .ig-coat  { font-size: 12px; color: #4a7090; margin-right: 10px; white-space: nowrap; }
+        .ig-iso   { font-size: 12px; font-weight: 700; color: #fcd34d; margin-right: 10px; white-space: nowrap; }
+        .ig-desc  { font-size: 12px; color: #3a5570; }
+
+        /* ── 결과 그리드 ── */
+        .result-grid {
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: row; flex-direction: row;
+            flex: 1;
+        }
+        .result-col {
+            flex: 1; display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+            padding: 0 4px;
+        }
+        .result-box {
+            flex: 1; display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+            -ms-flex-pack: center; justify-content: center;
+            background: #0b0f19; border: 1px solid #1e293b;
+            border-left: 6px solid #475569; border-radius: 5px;
+            text-align: center; margin-bottom: 7px; padding: 6px 2px;
+        }
+        .result-box:last-child { margin-bottom: 0; }
+        .result-title { font-size: 12.5px; color: #94a3b8; font-weight: bold; margin-bottom: 5px; }
+        .result-value { font-size: 19px; font-weight: bold; }
+
+        /* 컬러 팔레트 */
+        .color-s   { color: #38bdf8 !important; }
+        .color-f   { color: #fbbf24 !important; }
+        .color-q   { color: #f43f5e !important; }
+        .color-p   { color: #a78bfa !important; }
+        .color-ap  { color: #fb923c !important; }
+        .color-fc  { color: #34d399 !important; }
+        .color-vol { color: #cbd5e1 !important; }
+        .load-optimal { color: #10b981 !important; }
+        .load-stable  { color: #3b82f6 !important; }
+        .load-warn    { color: #eab308 !important; }
+        .load-danger  { color: #ef4444 !important; }
+        .color-green  { color: #2ecc71 !important; }
+        .color-orange { color: #ff9f43 !important; }
+        .color-cyan   { color: #67e8f9 !important; }
+
+        /* ── 하단 배너 ── */
+        .bottom-banner {
+            flex: 0 0 auto; margin-top: 10px; padding: 11px 14px;
+            background: #070a12; border: 1px solid #1e293b; border-radius: 6px;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+            -ms-flex-pack: center; justify-content: center;
+        }
+        .banner-line {
+            font-size: 14.5px; font-weight: bold;
+            margin-bottom: 5px; padding-bottom: 5px;
+            border-bottom: 1px dashed #1e293b;
+        }
+        .banner-line:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+        .time-highlight {
+            font-size: 20px; font-weight: 900; color: #10b981;
+            text-shadow: 0px 0px 4px rgba(16,185,129,0.4);
+        }
+        .power-scale-note {
+            font-size: 12px; color: #67e8f9; font-weight: normal;
+            margin-left: 8px;
+        }
+    </style>
+
+    <script>
+        var wsh = null;
+        try { wsh = new ActiveXObject("WScript.Shell"); } catch(e) {}
+        var regPath = "HKCU\\Software\\CNCLatheCalcV2\\";
+
+        // ══════════════════════════════════════════════════════
+        // PUMA 2600Y 장비 스펙
+        //   정격 출력 : 22 kW (연속)  /  30분 : 26 kW
+        //   최고 회전수: 3,500 RPM
+        // CNMG 120408 대구텍 인서트 기준 × 90% 성능 수준
+        //
+        // 절삭 동력 공식 (선삭): Pc = kc × Vc × f × ap / 60,000 (kW)
+        //   kc = 재질 비절삭저항 (N/mm²) — option value 그대로 사용
+        //
+        // 허용동력 변경 시 스케일링:
+        //   powerScale = 입력동력 / BASE_POWER(22kW)
+        //   ap_scaled  = ap_base × powerScale          (절입량 선형 비례)
+        //   f_scaled   = f_base  × sqrt(powerScale)    (이송은 제곱근 비례)
+        //   → Pc = kc × Vc × f_sc × ap_sc / 60000
+        //         ≈ kc × Vc × (f_base × √ps) × (ap_base × ps) / 60000
+        //         = Pc_base × ps^1.5   (합산 효과)
+        //   실용적으로 ap를 주 조정, f는 보조 조정
+        // ══════════════════════════════════════════════════════
+
+        var BASE_POWER  = 22.0;
+        var MACHINE_MAX_RPM = 3500;
+
+        // ★ SFM ↔ V 변환
+        var SFM_FACTOR = 3.28084;
+        function sfmFromV(v)   { return Math.round(v * SFM_FACTOR); }
+        function vFromSFM(sfm) { return parseFloat((sfm / SFM_FACTOR).toFixed(1)); }
+        function syncSFM() { sv('valSFM', sfmFromV(ev('valV'))); }
+        function updateBySFM() {
+            var sfm = parseFloat(gv('valSFM')) || 0;
+            if (sfm > 0) sv('valV', vFromSFM(sfm));
+            doCalc();
+        }
+
+        // ── 재질별 추천값 (CNMG120408 대구텍 · 100% 기준) ──
+        // PUMA 2600Y 22kW 정격 기준 ap / feed 스케일링 기준값
+        var recommendations = {
+            "700":  { v: 350, f: 0.30, ap: 3.0,  maxR: 3500 }, // Al
+            "1350": { v: 200, f: 0.28, ap: 2.8,  maxR: 2500 }, // 주철 FC/FCD
+            "1800": { v: 220, f: 0.28, ap: 2.8,  maxR: 2500 }, // 탄소강/구조용강 S45C
+            "1950": { v:  70, f: 0.22, ap: 1.8,  maxR: 1200 }, // ★ Ti6Al4V
+            "2200": { v: 170, f: 0.25, ap: 2.3,  maxR: 2000 }, // 합금강/금형강 SCM
+            "2400": { v: 130, f: 0.23, ap: 1.6, maxR: 1500 }, // 스테인리스 SUS304
+            "2750": { v:  60, f: 0.18, ap: 1.4,  maxR: 1000 }, // 열처리강 HRC40~
+            "3100": { v:  35, f: 0.12, ap: 1.2, maxR:  500  }, // 인코넬/내열합금
+            "780":  { v: 200, f: 0.25, ap: 3.0,  maxR: 3000 }  // ★ Bronze (청동)
+        };
+
+        // ── 재질별 대구텍 CNMG120408 추천 인서트 재종 ──
+        // 검색 자료 기반: TaeguTec Grade Guide (ISO 재질군별 최적 재종)
+        var insertGrades = {
+            "700":  {
+                grade: "TH10",
+                coat:  "비코팅 초경 (Uncoated Carbide)",
+                iso:   "ISO N · K10",
+                desc:  "비철금속 전용 · 알루미늄 고속 가공 최적"
+            },
+            "1350": {
+                grade: "TT7015",
+                coat:  "CVD 다층 코팅",
+                iso:   "ISO K · K10~K25",
+                desc:  "주철 FC/FCD 전용 · 내마모성 우수"
+            },
+            "1800": {
+                grade: "TT8125",
+                coat:  "CVD TiCN/Al₂O₃/TiN",
+                iso:   "ISO P · P15~P30",
+                desc:  "탄소강/구조용강 황삭~중삭 범용"
+            },
+            "1950": {
+                grade: "TT9030",
+                coat:  "PVD TiAlN 코팅",
+                iso:   "ISO S · S05~S20",
+                desc:  "Ti6Al4V 티타늄 전용 · 내용착성 최우선"
+            },
+            "2200": {
+                grade: "TT5100",
+                coat:  "CVD TiCN/Al₂O₃",
+                iso:   "ISO P · P20~P35",
+                desc:  "합금강/금형강 황삭 전용 · 고인성"
+            },
+            "2400": {
+                grade: "TT9215",
+                coat:  "PVD TiAlN 코팅",
+                iso:   "ISO M · M05~M20",
+                desc:  "SUS304 스테인리스 중삭~정삭"
+            },
+            "2750": {
+                grade: "TT8125",
+                coat:  "CVD TiCN/Al₂O₃/TiN",
+                iso:   "ISO P/H · P15~P30",
+                desc:  "열처리강 HRC40~ · 초경 카바이드 한계 범위"
+            },
+            "3100": {
+                grade: "TT7005",
+                coat:  "PVD TiAlN 코팅",
+                iso:   "ISO S · S05~S20",
+                desc:  "인코넬/초내열합금 난삭재 전용"
+            },
+            "780": {
+                grade: "TH10",
+                coat:  "비코팅 초경 (Uncoated Carbide)",
+                iso:   "ISO N · K10",
+                desc:  "청동/비철 전용 · 비코팅 K계열 최적"
+            }
+        };
+
+        // ── 유틸 ──
+        function gv(id) { var e=document.getElementById(id); return e?e.value:""; }
+        function sv(id,v){ var e=document.getElementById(id); if(e) e.value=v; }
+        function ev(id) {
+            var s=(gv(id)+"").replace(/[^0-9+\-*\/\.()]/g,'');
+            try { return parseFloat(eval(s))||0; } catch(e){ return parseFloat(gv(id))||0; }
+        }
+        function fixF(el) {
+            if(!el) return;
+            var s=el.value.replace(/[^0-9+\-*\/\.()]/g,'');
+            try {
+                var r=eval(s);
+                if(r!==undefined&&!isNaN(r)&&isFinite(r)) el.value=parseFloat(r.toFixed(4)).toString();
+            } catch(e){}
+            doCalc();
+        }
+
+        // ── 창 크기 ──
+        function applyInitialWindowState() {
+            var ok=false;
+            if(wsh){ try {
+                var wx=parseInt(wsh.RegRead(regPath+"winX")), wy=parseInt(wsh.RegRead(regPath+"winY"));
+                var ww=parseInt(wsh.RegRead(regPath+"winW")), wh=parseInt(wsh.RegRead(regPath+"winH"));
+                if(!isNaN(ww)&&!isNaN(wh)&&ww>200&&wh>200){window.resizeTo(ww,wh);window.moveTo(wx,wy);ok=true;}
+            } catch(e){} }
+            if(!ok){ window.resizeTo(1280,800); window.moveTo((screen.width-1280)/2,(screen.height-800)/2); }
+        }
+        applyInitialWindowState();
+
+        window.onbeforeunload=function(){
+            if(!wsh) return;
+            try {
+                var ww=window.outerWidth||1280, wh=window.outerHeight||800;
+                var wx=window.screenLeft||0,    wy=window.screenTop||0;
+                if(ww>200&&wh>200){
+                    wsh.RegWrite(regPath+"winX",wx,"REG_DWORD"); wsh.RegWrite(regPath+"winY",wy,"REG_DWORD");
+                    wsh.RegWrite(regPath+"winW",ww,"REG_DWORD"); wsh.RegWrite(regPath+"winH",wh,"REG_DWORD");
+                }
+            } catch(e){}
+        };
+
+        function handleResize() {
+            var bW=1280, bH=800;
+            var wW=window.innerWidth||document.documentElement.clientWidth;
+            var wH=window.innerHeight||document.documentElement.clientHeight;
+            if(!wW||!wH) return;
+            var sc=Math.min(wW/bW,wH/bH);
+            var c=document.getElementById('mainContainer');
+            if(c){c.style.width=(wW/sc)+"px";c.style.height=(wH/sc)+"px";
+                  c.style.msTransform="scale("+sc+")";c.style.transform="scale("+sc+")";}
+        }
+        window.onresize=handleResize;
+
+        // ── 설정 저장/불러오기 ──
+        var _ids=['valMat','valDmax','valDmin','valSFM','valV','valMaxRPM','valFeed','valAp','valL','valMaxPower'];
+
+        function loadSettings() {
+            if(!wsh) return;
+            for(var i=0;i<_ids.length;i++){
+                try{ var s=wsh.RegRead(regPath+_ids[i]); if(s!=="") sv(_ids[i],s); }catch(e){}
+            }
+        }
+        function saveSettings() {
+            if(!wsh) return;
+            for(var i=0;i<_ids.length;i++){
+                try{ wsh.RegWrite(regPath+_ids[i],gv(_ids[i]),"REG_SZ"); }catch(e){}
+            }
+        }
+
+        // ── 추천값 적용 ──
+        // 동력 입력에 따라 ap/f 비례 스케일링 후 적용
+        function applyRecommendation() {
+            var mat      = gv('valMat');
+            var maxPower = ev('valMaxPower') || BASE_POWER;
+            var rec      = recommendations[mat];
+            if(!rec) { doCalc(); return; }
+
+            // 동력 스케일 (상한 1.5, 하한 0.2)
+            var ps  = Math.min(1.5, Math.max(0.2, maxPower / BASE_POWER));
+            var sqPs= Math.sqrt(ps);
+
+            // ★ 스케일링
+            //   ap  : 동력에 선형 비례 (주 조정 파라미터)
+            //   feed: 제곱근 비례 (이송은 가공 품질 유지를 위해 완만하게 조정)
+            var apScaled   = parseFloat((rec.ap   * ps   ).toFixed(2));
+            var feedScaled = parseFloat((rec.f    * sqPs ).toFixed(3));
+
+            // G50은 재질 권장 상한 내에서 PUMA 2600Y 3500 RPM 이하
+            var g50 = Math.min(rec.maxR, MACHINE_MAX_RPM);
+
+            sv('valV',       rec.v);
+            sv('valSFM',     sfmFromV(rec.v)); // ★ SFM 동기화
+            sv('valFeed',    feedScaled);
+            sv('valAp',      apScaled);
+            sv('valMaxRPM',  g50);
+
+            doCalc();
+        }
+
+        // ── 계산 ──
+        function doCalc() {
+            syncSFM(); // ★ V 변경 시 SFM 항상 동기화
+            var mat      = gv('valMat');
+            var kc       = parseFloat(mat) || 0;
+            var Dmax     = ev('valDmax');
+            var Dmin     = ev('valDmin');
+            var V        = ev('valV');
+            var maxRPMLim= ev('valMaxRPM');
+            var feed     = ev('valFeed');
+            var ap       = ev('valAp');
+            var L        = ev('valL');
+            var maxPower = ev('valMaxPower');
+
+            // Dmax < Dmin 오류 표시
+            var eDmax=document.getElementById('valDmax'), eDmin=document.getElementById('valDmin');
+            if(Dmax - Dmin < 0){
+                if(eDmax) eDmax.className="error-input";
+                if(eDmin) eDmin.className="error-input";
+            } else {
+                if(eDmax) eDmax.className="";
+                if(eDmin) eDmin.className="";
+            }
+
+            // CSS 모드 RPM 산출
+            var minRPM=0, maxRPM=0;
+            if(V > 0){
+                if(Dmax>0){ minRPM=(1000*V)/(Math.PI*Dmax); if(maxRPMLim>0&&minRPM>maxRPMLim) minRPM=maxRPMLim; }
+                if(Dmin>0){ maxRPM=(1000*V)/(Math.PI*Dmin); if(maxRPMLim>0&&maxRPM>maxRPMLim) maxRPM=maxRPMLim; }
+            }
+
+            var feedMin  = minRPM * feed;               // 가공 시작 시점(Dmax) 기준 분당 이송
+            var mrr      = V * ap * feed;               // cm³/min (선삭 MRR = Vc×ap×f)
+            var forceKg  = (ap * feed * kc) / 9.81;    // 주절삭력 kgf
+            var totalVol = (Math.PI * (Dmax*Dmax - Dmin*Dmin) * L) / 4000;
+            if(totalVol<0) totalVol=0;
+
+            // 패스 수 / 가공 시간
+            var passes=0, totalSec=0;
+            var radialMargin = (Dmax - Dmin) / 2;
+            if(radialMargin > 0){
+                if(L <= 1.6){
+                    // 단면 가공 특수공정 (Z이동 없음)
+                    passes = 1;
+                    if(feedMin>0) totalSec = (radialMargin / feedMin) * 60;
+                } else {
+                    if(ap>0) passes = Math.ceil(radialMargin / ap);
+                    if(feedMin>0 && L>0 && passes>0) totalSec = (L / feedMin) * 60 * passes;
+                }
+            }
+
+            // 절삭 동력 (선삭): Pc = kc × Vc × f × ap / 60,000
+            var powerKw  = (ap * feed * V * kc) / 60000;
+            var loadRate = (maxPower>0) ? (powerKw/maxPower)*100 : 0;
+            var totalKwh = (totalSec>0&&powerKw>0) ? powerKw*(totalSec/3600) : 0;
+
+            // ★ 예상 스핀들 부하율 = Pc / PUMA 2600Y 정격(22kW) × 100
+            //   설비 부하율(입력 동력 대비)과 별개로, 기계 고유 정격 대비 실제 부하 표시
+            var spindleLoad = (powerKw / BASE_POWER) * 100;
+            var spindleClass="load-optimal", spindleText="여유";
+            if     (spindleLoad > 90){ spindleClass="load-danger"; spindleText="과부하 위험"; }
+            else if(spindleLoad > 70){ spindleClass="load-warn";   spindleText="주의"; }
+            else if(spindleLoad > 40){ spindleClass="load-stable"; spindleText="적정"; }
+
+            // 부하율 판정 (80% 기준)
+            var loadClass="load-optimal", loadText="최적 가공";
+            if     (loadRate > 80){ loadClass="load-danger"; loadText="위험 과부하"; }
+            else if(loadRate > 60){ loadClass="load-warn";   loadText="주의/경고"; }
+            else if(loadRate > 30){ loadClass="load-stable"; loadText="안정"; }
+
+            // ── 결과 출력 ──
+            // ★ 인서트 추천 재종 표시 (결과 최상단)
+            var igInfo = insertGrades[mat];
+            if(igInfo) {
+                var igEl = document.getElementById('insertGradeBox');
+                if(igEl) igEl.innerHTML =
+                    "<span class='ig-label'>&#9660; 추천 인서트</span>" +
+                    "<span class='ig-grade'>CNMG 120408 &nbsp;<b>" + igInfo.grade + "</b></span>" +
+                    "<span class='ig-coat'>" + igInfo.coat + "</span>" +
+                    "<span class='ig-iso'>" + igInfo.iso + "</span>" +
+                    "<span class='ig-desc'>" + igInfo.desc + "</span>";
+            }
+
+            document.getElementById('resMinRPM').innerHTML  = Math.round(minRPM)  + " RPM";
+            document.getElementById('resMaxRPM').innerHTML  = Math.round(maxRPM)  + " RPM";
+            document.getElementById('resFeed').innerHTML    = Math.round(feedMin) + " mm/min";
+
+            // ★ 스핀들 부하율 (기계 정격 22kW 기준)
+            var resSpindleEl = document.getElementById('resSpindleLoad');
+            resSpindleEl.innerHTML = spindleLoad.toFixed(1) + " % (" + spindleText + ")";
+            resSpindleEl.className = "result-value " + spindleClass;
+
+            var resLoadEl = document.getElementById('resLoad');
+            resLoadEl.innerHTML = loadRate.toFixed(1) + " % (" + loadText + ")";
+            resLoadEl.className = "result-value " + loadClass;
+
+            document.getElementById('resMRR').innerHTML     = mrr.toFixed(1)      + " cm³/min";
+            document.getElementById('resPasses').innerHTML  = passes               + " 회";
+            document.getElementById('resForce').innerHTML   = Math.round(forceKg) + " kgf";
+            document.getElementById('resTotalVol').innerHTML= totalVol.toLocaleString(undefined,{maximumFractionDigits:1}) + " cm³";
+
+            // 시간 포맷
+            var timeStr="0초";
+            if(totalSec>0){
+                var h=Math.floor(totalSec/3600), m=Math.floor((totalSec%3600)/60), s=Math.round(totalSec%60);
+                timeStr=(h>0?h+"시간 ":"")+(m>0||h>0?m+"분 ":"")+s+"초";
+                if(L<=1.6) timeStr+=" [단면 특수공정]";
+                timeStr+=" ("+passes+"회)";
+            }
+
+            // 동력 스케일 표시
+            var rec = recommendations[mat];
+            var ps  = maxPower / BASE_POWER;
+            var scaleNote="";
+            if(rec && Math.abs(ps-1.0)>0.02){
+                scaleNote = " / 동력 스케일 ×" + ps.toFixed(2) +
+                    " → ap " + (rec.ap*Math.min(1.5,Math.max(0.2,ps))).toFixed(2) +
+                    "mm · f "+(rec.f*Math.sqrt(Math.min(1.5,Math.max(0.2,ps)))).toFixed(3)+"mm/rev";
+            }
+
+            var sfmCur = sfmFromV(V);
+
+            // 하단 배너
+            var bannerHtml =
+                "<div class='banner-line color-green' style='display:flex;align-items:center;'>" +
+                    "⏱️ 총 예측 가공 시간:&nbsp;&nbsp;<span class='time-highlight'>" + timeStr + "</span>" +
+                "</div>" +
+                "<div class='banner-line' style='display:flex;align-items:center;'>" +
+                    "<span style='color:#fde68a;font-weight:900;'>&#9733; SFM:&nbsp;</span>" +
+                    "<span style='color:#fcd34d;font-size:19px;font-weight:900;'>" + sfmCur + " ft/min</span>" +
+                    "&nbsp;&nbsp;<span style='color:#4a5568;font-size:13px;'>| Vc " + V.toFixed(1) + " m/min</span>" +
+                "</div>" +
+                "<div class='banner-line color-orange'>⚡ 소비 전력: " + totalKwh.toFixed(3) + " kWh" +
+                    "&nbsp;&nbsp;|&nbsp;&nbsp;Pc: <span style='color:#fbbf24;font-weight:900;'>" + powerKw.toFixed(2) + " kW</span>" +
+                    "&nbsp;&nbsp;|&nbsp;&nbsp;스핀들 부하: <span class='" + spindleClass + "'>" + spindleLoad.toFixed(1) + "% (" + spindleText + ")</span>" +
+                "</div>" +
+                "<div class='banner-line color-cyan'>🔧 PUMA 2600Y (22kW / 3,500RPM) · 대구텍 CNMG120408 · 100% 기준" +
+                    "<span class='power-scale-note'>" + scaleNote + "</span>" +
+                "</div>" +
+                "<div class='banner-line " + loadClass + "'>📊 설비 부하 판정: " + loadText +
+                    " 구역 (" + loadRate.toFixed(1) + "% / 기준 80%)" +
+                "</div>";
+
+            document.getElementById('infoBanner').innerHTML = bannerHtml;
+            saveSettings();
+        }
+
+        // ── 초기화 ──
+        function initApp() {
+            handleResize();
+            loadSettings();
+
+            // ★ HTA(IE) 환경에서 select onchange가 포커스 이탈 전 발화 안 되는
+            //   문제를 방지하기 위해 JS로 직접 이벤트 바인딩 (onclick + onchange 이중 등록)
+            var matSel = document.getElementById('valMat');
+            if(matSel) {
+                matSel.onchange = function() { applyRecommendation(); };
+                matSel.onclick  = function() {
+                    var cur = this.value;
+                    var self = this;
+                    setTimeout(function() {
+                        if(self.value !== cur || true) applyRecommendation();
+                    }, 0);
+                };
+            }
+
+            var inputs=document.getElementsByTagName('input');
+            for(var i=0;i<inputs.length;i++){
+                inputs[i].onfocus=function(){ var t=this; setTimeout(function(){t.select();},20); };
+            }
+            doCalc();
+        }
+        window.onload=initApp;
+    </script>
+</head>
+<body>
+<div id="mainContainer">
+
+    <!-- 타이틀 -->
+    <div class="title-bar">
+        <div class="t-main">🔩 선반 (Lathe) 가공 조건 산출기 — CSS / G96 연동</div>
+        <div class="t-sub">장비: DN솔루션 PUMA 2600Y (22kW / 3,500RPM) &nbsp;·&nbsp; 인서트: 대구텍 CNMG 120408 · 100% 기준 절삭조건</div>
+    </div>
+
+    <div class="main-layout">
+
+        <!-- ═══ 좌측 입력 패널 ═══ -->
+        <div class="left-panel">
+
+            <div class="input-group bg-dark-1">
+                <label class="lbl-mat">가공 소재 선택</label>
+                <div class="input-wrap">
+                    <select id="valMat" onchange="applyRecommendation();">
+                        <option value="700">알루미늄 (Al)</option>
+                        <option value="1350">주철 (FC/FCD)</option>
+                        <option value="1800" selected>탄소강/구조용강 (S45C)</option>
+                        <option value="1950">&#9733; 티타늄 Ti6Al4V</option>
+                        <option value="2200">합금강/금형강 (SCM)</option>
+                        <option value="2400">스테인리스강 (SUS304)</option>
+                        <option value="2750">열처리강 (HRC 40~)</option>
+                        <option value="3100">인코넬 / 내열합금</option>
+                        <option value="780">&#9733; 청동 (Bronze)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label class="lbl-dim">소재 최대 직경 D_max (mm)</label>
+                <div class="input-wrap"><input type="text" id="valDmax" value="100" onkeyup="doCalc();" onblur="fixF(this);"></div>
+            </div>
+
+            <div class="input-group bg-dark-1">
+                <label class="lbl-dim">가공 목표 직경 D_min (mm)</label>
+                <div class="input-wrap"><input type="text" id="valDmin" value="50" onkeyup="doCalc();" onblur="fixF(this);"></div>
+            </div>
+
+            <!-- ★ SFM 입력 (V 앞 배치, V 우선순위) -->
+            <div class="input-group bg-sfm">
+                <label class="lbl-sfm">&#9733; SFM (ft/min)</label>
+                <div class="input-wrap"><input type="text" id="valSFM" value="650" class="sfm-input" onkeyup="updateBySFM();" onblur="fixF(this);"></div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label class="lbl-cut">절삭 속도 V (m/min)</label>
+                <div class="input-wrap"><input type="text" id="valV" value="198" onkeyup="doCalc();" onblur="fixF(this);"></div>
+            </div>
+
+            <div class="input-group bg-dark-1">
+                <label class="lbl-cut">G50 제한 최고 RPM</label>
+                <div class="input-wrap"><input type="text" id="valMaxRPM" class="key-input" value="2500" onkeyup="doCalc();" onblur="fixF(this);"></div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label class="lbl-feed">회전당 이송 F (mm/rev)</label>
+                <div class="input-wrap"><input type="text" id="valFeed" class="key-input" value="0.23" onkeyup="doCalc();" onblur="fixF(this);"></div>
+            </div>
+
+            <div class="input-group bg-dark-1">
+                <label class="lbl-feed">반경 기준 절입량 Ap (mm)</label>
+                <div class="input-wrap"><input type="text" id="valAp" class="key-input" value="2.3" onkeyup="doCalc();" onblur="fixF(this);"></div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label class="lbl-size">Z축 총 가공 길이 L (mm)</label>
+                <div class="input-wrap"><input type="text" id="valL" value="100" onkeyup="doCalc();" onblur="fixF(this);"></div>
+            </div>
+
+            <div class="input-group bg-sep" style="margin-bottom:0;">
+                <label class="lbl-power">설비 허용 동력 (kW)</label>
+                <div class="input-wrap"><input type="text" id="valMaxPower" class="power-input" value="22.0" onkeyup="applyRecommendation();" onblur="fixF(this);"></div>
+            </div>
+
+        </div>
+
+        <!-- ═══ 우측 결과 패널 ═══ -->
+        <div class="right-panel">
+
+            <!-- ★ 추천 인서트 재종 박스 (결과 최상단) -->
+            <div id="insertGradeBox" class="insert-grade-box">
+                <span class="ig-label">&#9660; 추천 인서트</span>
+                <span class="ig-grade">CNMG 120408 &nbsp;<b>TT8125</b></span>
+                <span class="ig-coat">CVD TiCN/Al₂O₃/TiN</span>
+                <span class="ig-iso">ISO P · P15~P30</span>
+                <span class="ig-desc">탄소강/구조용강 황삭~중삭 범용</span>
+            </div>
+
+            <div class="result-grid">
+
+                <!-- 결과 열 1 -->
+                <div class="result-col">
+                    <div class="result-box" style="border-left-color:#38bdf8;">
+                        <div class="result-title">주축 최저 속도 (G96 / D_max 기준)</div>
+                        <div id="resMinRPM" class="result-value color-s">0 RPM</div>
+                    </div>
+                    <div class="result-box" style="border-left-color:#60a5fa;">
+                        <div class="result-title">주축 최대 속도 (G50 / D_min 기준)</div>
+                        <div id="resMaxRPM" class="result-value color-s">0 RPM</div>
+                    </div>
+                    <div class="result-box" style="border-left-color:#fbbf24;">
+                        <div class="result-title">분당 이송속도 Vf (D_max 기준)</div>
+                        <div id="resFeed" class="result-value color-f">0 mm/min</div>
+                    </div>
+                </div>
+
+                <!-- 결과 열 2 -->
+                <div class="result-col">
+                    <div class="result-box" style="border-left-color:#a78bfa;">
+                        <div class="result-title">예상 스핀들 부하율 (PUMA 2600Y · 22kW)</div>
+                        <div id="resSpindleLoad" class="result-value load-optimal">0.0 %</div>
+                    </div>
+                    <div class="result-box" style="border-left-color:#10b981;">
+                        <div class="result-title">설비 부하율 판정 (Max 80%)</div>
+                        <div id="resLoad" class="result-value load-optimal">0.0 %</div>
+                    </div>
+                    <div class="result-box" style="border-left-color:#f43f5e;">
+                        <div class="result-title">칩 배출량 MRR (Q)</div>
+                        <div id="resMRR" class="result-value color-q">0.0 cm³/min</div>
+                    </div>
+                </div>
+
+                <!-- 결과 열 3 -->
+                <div class="result-col">
+                    <div class="result-box" style="border-left-color:#fb923c;">
+                        <div class="result-title">반경 기준 가공 패스 수</div>
+                        <div id="resPasses" class="result-value color-ap">0 회</div>
+                    </div>
+                    <div class="result-box" style="border-left-color:#34d399;">
+                        <div class="result-title">주 절삭력 Fc</div>
+                        <div id="resForce" class="result-value color-fc">0 kgf</div>
+                    </div>
+                    <div class="result-box" style="border-left-color:#cbd5e1;">
+                        <div class="result-title">총 제거 체적 (Vol)</div>
+                        <div id="resTotalVol" class="result-value color-vol">0.0 cm³</div>
+                    </div>
+                </div>
+
+            </div>
+
+            <div id="infoBanner" class="bottom-banner"></div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

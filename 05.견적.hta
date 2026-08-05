@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>CNC 견적 & 가공 조건 산출기 (Hi-Feed 대응)</title>
+    <hta:application 
+        applicationname="CNCEstimateCalc"
+        scroll="no" 
+        singleinstance="yes"
+        windowstate="normal">
+    <style>
+        * { box-sizing: border-box; }
+        body, html {
+            background-color: #121824; color: #e2e8f0;
+            font-family: 'Malgun Gothic', sans-serif;
+            margin: 0; padding: 0; overflow: hidden;
+            width: 100vw; height: 100vh;
+        }
+        #mainContainer {
+            position: absolute; left: 0; top: 0;
+            transform-origin: top left; -ms-transform-origin: top left;
+            padding: 14px; 
+            display: -ms-flexbox; display: flex; 
+            -ms-flex-direction: column; flex-direction: column;
+        }
+        .main-layout {
+            flex: 1 1 auto;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: row; flex-direction: row;
+        }
+
+        /* ── 좌측 입력 패널: 비율 확대 ── */
+        .left-panel {
+            width: 42%;
+            padding-right: 14px;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+        }
+        .right-panel {
+            width: 58%;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+        }
+
+        /* ── 모드 전환 탭 ── */
+        .mode-container {
+            display: -ms-flexbox; display: flex;
+            width: 100%; margin-bottom: 10px; border-radius: 7px;
+            background: #1a2333; border: 1px solid #2d3748;
+            flex: 0 0 auto;
+        }
+        .mode-btn {
+            flex: 1; text-align: center; padding: 12px 0;
+            font-size: 16px; font-weight: bold; color: #718096;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .mode-btn.active {
+            background: #3182ce; color: #ffffff; text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        }
+
+        /* ── 입력 그룹 행: 높이·패딩 확대 ── */
+        .input-group {
+            display: -ms-flexbox; display: flex;
+            -ms-flex-align: center; align-items: center;
+            margin-bottom: 5px; padding: 5px 12px;
+            border-radius: 6px;
+            flex: 1;
+            min-height: 46px;   /* 행 최소 높이 확보 */
+        }
+        .bg-dark-1 { background-color: #1e293b; border: 1px solid #3b4f6a; }
+        .bg-dark-2 { background-color: #0f172a; border: 1px solid #1e3248; }
+
+        /* ── 라벨: 폰트 대형화·밝기 강화 ── */
+        .input-group label {
+            width: 48%;
+            font-weight: 700;
+            color: #c8d8f0;       /* 기존 #94a3b8 → 더 밝게 */
+            font-size: 15px;      /* 기존 13px → 15px */
+            line-height: 1.3;
+        }
+        .input-wrap { width: 52%; }
+
+        /* ── 입력 필드·셀렉트: 높이·폰트 대형화 ── */
+        input, select {
+            width: 100%; padding: 4px 6px;
+            border: 2px solid #4a6080; border-radius: 5px;
+            background: #ffffff; font-weight: 700;
+            font-size: 17px;          /* 기존 15px → 17px */
+            text-align: center;
+            height: 38px;             /* 기존 30px → 38px */
+            color: #000000;
+        }
+        /* 재질 셀렉트는 텍스트가 길어 좌정렬이 읽기 편함 */
+        select { text-align: left; padding-left: 8px; font-size: 15px; }
+
+        /* 주요 입력값 강조 (노란 배경) */
+        input.key-input {
+            background: #fef08a !important; color: #b91c1c !important;
+            border: 2px solid #ca8a04 !important;
+            font-size: 18px !important;
+        }
+        /* 동력 입력 강조 (연노랑 배경) */
+        input.power-input {
+            background: #fef9c3 !important; color: #b91c1c !important;
+            border: 2px solid #eab308 !important;
+            font-size: 18px !important;
+        }
+        input:disabled, select:disabled {
+            background: #475569 !important; color: #1e293b !important;
+            border: 2px solid #334155 !important; cursor: not-allowed;
+        }
+
+        /* ★ SFM 입력 강조 (앰버/황금색 배경) */
+        input.sfm-input {
+            background: #fffbeb !important; color: #92400e !important;
+            border: 2px solid #d97706 !important;
+            font-size: 18px !important; font-weight: 800 !important;
+        }
+        .bg-sfm { background-color: #1a1500 !important; border: 1px solid #5a4a10 !important; }
+
+        /* ── 우측 결과 그리드 ── */
+        .result-grid {
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: row; flex-direction: row;
+            flex: 1;
+        }
+        .result-col {
+            flex: 1; display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+            padding: 0 4px;
+        }
+        .result-box {
+            flex: 1; display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+            -ms-flex-pack: center; justify-content: center;
+            background: #0b0f19; border: 1px solid #1e293b;
+            border-left: 6px solid #475569; border-radius: 5px;
+            text-align: center; margin-bottom: 7px; padding: 6px 2px;
+        }
+        .result-box:last-child { margin-bottom: 0; }
+        .result-title { font-size: 13px; color: #94a3b8; font-weight: bold; margin-bottom: 5px; }
+        .result-value { font-size: 20px; font-weight: bold; }
+
+        /* 컬러 팔레트 */
+        .color-s   { color: #38bdf8 !important; }
+        .color-f   { color: #fbbf24 !important; }
+        .color-ae  { color: #f43f5e !important; }
+        .color-p   { color: #a78bfa !important; }
+        .color-ap  { color: #fb923c !important; }
+        .color-len { color: #34d399 !important; }
+        .color-area{ color: #cbd5e1 !important; }
+        .color-wh  { color: #22d3ee !important; }
+        .load-optimal { color: #10b981 !important; }
+        .load-stable  { color: #3b82f6 !important; }
+        .load-warn    { color: #eab308 !important; }
+        .load-danger  { color: #ef4444 !important; }
+        .color-green  { color: #2ecc71 !important; }
+        .color-orange { color: #ff9f43 !important; }
+
+        /* ── 하단 배너 ── */
+        .bottom-banner {
+            flex: 0 0 auto; margin-top: 10px; padding: 11px 14px;
+            background: #070a12; border: 1px solid #1e293b; border-radius: 6px;
+            display: -ms-flexbox; display: flex;
+            -ms-flex-direction: column; flex-direction: column;
+            -ms-flex-pack: center; justify-content: center;
+        }
+        .banner-line {
+            font-size: 15px; font-weight: bold;
+            margin-bottom: 5px; padding-bottom: 5px;
+            border-bottom: 1px dashed #1e293b;
+        }
+        .banner-line:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+        .weight-large { font-size: 15px !important; }
+        .time-highlight {
+            font-size: 20px; font-weight: 900; color: #10b981;
+            text-shadow: 0px 0px 4px rgba(16, 185, 129, 0.4);
+        }
+        .weight-highlight {
+            font-size: 19px; font-weight: 900; color: #facc15;
+            text-shadow: 0px 0px 4px rgba(250, 204, 21, 0.4);
+        }
+    </style>
+
+    <script>
+        var wsh = null;
+        try { wsh = new ActiveXObject("WScript.Shell"); } catch (e) { }
+        var regPath = "HKCU\\Software\\CNCEstimateCalcV1\\";
+
+        var currentMode = "FACE";
+
+        // ★ 재질별 비중 테이블 (g/cm³ = kg/dm³)
+        // 계산식: 부피(mm³) = L × W × H
+        //         부피(cm³) = 부피(mm³) / 1000
+        //         중량(g)   = 부피(cm³) × 비중
+        //         중량(kg)  = 중량(g) / 1000
+        //     => weightKg = (L × W × H × density) / 1,000,000
+        var materialDensity = {
+            "700":  2.70,
+            "1350": 7.20,
+            "1800": 7.85,
+            "1950": 4.43,   // ★ 티타늄 Ti6Al4V
+            "2200": 7.85,
+            "2400": 7.93,
+            "2750": 8.00,
+            "3100": 8.44
+        };
+        var materialDensityLabel = {
+            "700":  "알루미늄 합금 · 비중 2.70 g/cm³",
+            "1350": "주철 FC/FCD · 비중 7.20 g/cm³",
+            "1800": "탄소강/구조용강 · 비중 7.85 g/cm³",
+            "1950": "티타늄 Ti6Al4V · 비중 4.43 g/cm³",
+            "2200": "합금강/금형강 · 비중 7.85 g/cm³",
+            "2400": "STS304 스테인리스 · 비중 7.93 g/cm³",
+            "2750": "내열합금강 · 비중 8.00 g/cm³",
+            "3100": "인코넬 625/718 · 비중 8.44 g/cm³"
+        };
+
+        var aeRecommendations = {
+            "700":  { v: 450, fz: 0.16, z: 3, baseAeP2D: 12, defD: 12 },
+            "1350": { v: 180, fz: 0.10, z: 4, baseAeP2D: 10, defD: 12 },
+            "1800": { v: 160, fz: 0.09, z: 4, baseAeP2D: 9,  defD: 12 },
+            "1950": { v:  85, fz: 0.045, z: 4, baseAeP2D: 7 , defD: 12 }, // ★ Ti6A
+            "2200": { v: 150, fz: 0.08, z: 4, baseAeP2D: 8,  defD: 12 },
+            "2400": { v: 120, fz: 0.07, z: 4, baseAeP2D: 8,  defD: 12 },
+            "2750": { v: 90,  fz: 0.06, z: 4, baseAeP2D: 7,  defD: 12 },
+            "3100": { v: 32,  fz: 0.05, z: 4, baseAeP2D: 5,  defD: 12 }
+        };
+        var faceRecommendations = {
+            "700":  { v: 800, fz: 0.18, z: 2, ap: 2.0,  defD: 26 },
+            "1350": { v: 135, fz: 0.70, z: 4, ap: 0.54, defD: 26 },
+            "1800": { v: 130, fz: 0.65, z: 4, ap: 0.54, defD: 26 },
+            "1950": { v: 100, fz: 0.30, z: 4, ap: 0.60, defD: 26 }, // ★ Ti6A Hi-Feed
+            "2200": { v: 120, fz: 0.63, z: 4, ap: 0.43, defD: 26 },
+            "2400": { v: 90,  fz: 0.50, z: 4, ap: 0.38, defD: 26 },
+            "2750": { v: 60,  fz: 0.50, z: 4, ap: 0.32, defD: 26 },
+            "3100": { v: 35,  fz: 0.42, z: 4, ap: 0.27, defD: 26 }
+        };
+
+        function applyInitialWindowState() {
+            var restored = false;
+            if (wsh) {
+                try {
+                    var winX = parseInt(wsh.RegRead(regPath + "winX"));
+                    var winY = parseInt(wsh.RegRead(regPath + "winY"));
+                    var winW = parseInt(wsh.RegRead(regPath + "winW"));
+                    var winH = parseInt(wsh.RegRead(regPath + "winH"));
+                    if (!isNaN(winW) && !isNaN(winH) && winW > 200 && winH > 200) {
+                        window.resizeTo(winW, winH);
+                        window.moveTo(winX, winY);
+                        restored = true;
+                    }
+                } catch(e) {}
+            }
+            if (!restored) {
+                window.resizeTo(1280, 800);
+                window.moveTo((screen.width - 1280) / 2, (screen.height - 800) / 2);
+            }
+        }
+        applyInitialWindowState();
+
+        window.onbeforeunload = function() {
+            if (wsh) {
+                try {
+                    var winW = window.outerWidth  || document.documentElement.offsetWidth  || 1180;
+                    var winH = window.outerHeight || document.documentElement.offsetHeight || 680;
+                    var winX = window.screenLeft  || window.screenX || 0;
+                    var winY = window.screenTop   || window.screenY || 0;
+                    if (winW > 200 && winH > 200) {
+                        wsh.RegWrite(regPath + "winX", winX, "REG_DWORD");
+                        wsh.RegWrite(regPath + "winY", winY, "REG_DWORD");
+                        wsh.RegWrite(regPath + "winW", winW, "REG_DWORD");
+                        wsh.RegWrite(regPath + "winH", winH, "REG_DWORD");
+                    }
+                } catch(e) {}
+            }
+        };
+
+        function handleResize() {
+            var baseW = 1280, baseH = 800;
+            var winW = window.innerWidth  || document.documentElement.clientWidth;
+            var winH = window.innerHeight || document.documentElement.clientHeight;
+            if (!winW || !winH) return;
+            var scale = Math.min(winW / baseW, winH / baseH);
+            var container = document.getElementById('mainContainer');
+            if (container) {
+                container.style.width       = (winW / scale) + "px";
+                container.style.height      = (winH / scale) + "px";
+                container.style.msTransform = "scale(" + scale + ")";
+                container.style.transform   = "scale(" + scale + ")";
+            }
+        }
+        window.onresize = handleResize;
+
+        function loadSettings() {
+            if (!wsh) return;
+            var ids = ['selectMat','toolD','toolZ','inputV','inputSFM','inputS','inputFz','maxRPM','inputAp','inputAePer','totalH','totalL','totalW','limitPower'];
+            for (var i = 0; i < ids.length; i++) {
+                try {
+                    var saved = wsh.RegRead(regPath + ids[i]);
+                    if (saved !== "") document.getElementById(ids[i]).value = saved;
+                } catch (e) {}
+            }
+            try {
+                var savedMode = wsh.RegRead(regPath + "currentMode");
+                if (savedMode === "AE" || savedMode === "FACE") currentMode = savedMode;
+            } catch(e) {}
+        }
+
+        function saveSettings() {
+            if (!wsh) return;
+            var ids = ['selectMat','toolD','toolZ','inputV','inputSFM','inputS','inputFz','maxRPM','inputAp','inputAePer','totalH','totalL','totalW','limitPower'];
+            for (var i = 0; i < ids.length; i++) {
+                var el = document.getElementById(ids[i]);
+                if (el) { try { wsh.RegWrite(regPath + ids[i], el.value, "REG_SZ"); } catch (e) {} }
+            }
+            try { wsh.RegWrite(regPath + "currentMode", currentMode, "REG_SZ"); } catch(e) {}
+        }
+
+        function changeMode(mode, skipRecommend) {
+            currentMode = mode;
+            document.getElementById('btnModeAE').className    = (mode === "AE")   ? "mode-btn active" : "mode-btn";
+            document.getElementById('btnModeFACE').className  = (mode === "FACE") ? "mode-btn active" : "mode-btn";
+            if (mode === "AE") {
+                document.getElementById('inputAePer').disabled = true;
+                document.getElementById('inputAp').disabled    = false;
+            } else {
+                document.getElementById('inputAePer').disabled = false;
+                document.getElementById('inputAp').disabled    = false;
+            }
+            if (!skipRecommend) onMaterialChange();
+            updateCalculations();
+        }
+
+        // ★ 동력 기준값 (참조 프로그램과 동일한 18.5 kW 기준)
+        var BASE_POWER_KW = 18.5;
+
+        // ★ SFM ↔ V 변환 (V 우선순위: V 바뀌면 SFM 따라옴)
+        var SFM_FACTOR = 3.28084;
+        function sfmFromV(v)   { return Math.round(v * SFM_FACTOR); }
+        function vFromSFM(sfm) { return parseFloat((sfm / SFM_FACTOR).toFixed(1)); }
+
+        function syncSFM() {
+            var V = parseFloat(document.getElementById('inputV').value) || 0;
+            document.getElementById('inputSFM').value = sfmFromV(V);
+        }
+
+        function updateBySFM() {
+            var sfm = parseFloat(document.getElementById('inputSFM').value) || 0;
+            if (sfm > 0) document.getElementById('inputV').value = vFromSFM(sfm);
+            updateByV(); // V가 우선순위 → SFM은 V를 거쳐 RPM 계산
+        }
+
+        function updateByV() {
+            var D      = parseFloat(document.getElementById('toolD').value)  || 12;
+            var V      = parseFloat(document.getElementById('inputV').value)  || 0;
+            var maxRPM = parseFloat(document.getElementById('maxRPM').value) || 10000;
+            var RPM    = (1000 * V) / (Math.PI * D);
+            if (RPM > maxRPM) RPM = maxRPM;
+            document.getElementById('inputS').value = Math.round(RPM);
+            syncSFM(); // ★ SFM 동기화
+            updateCalculations();
+        }
+
+        function updateByS() {
+            var D      = parseFloat(document.getElementById('toolD').value)  || 12;
+            var S      = parseFloat(document.getElementById('inputS').value) || 0;
+            var maxRPM = parseFloat(document.getElementById('maxRPM').value) || 10000;
+            if (S > maxRPM) { S = maxRPM; document.getElementById('inputS').value = S; }
+            document.getElementById('inputV').value = Math.round((Math.PI * D * S) / 1000);
+            syncSFM(); // ★ SFM 동기화
+            updateCalculations();
+        }
+        function onMaterialChange() {
+            var matKey     = document.getElementById('selectMat').value;
+            var limitPower = parseFloat(document.getElementById('limitPower').value) || BASE_POWER_KW;
+            var powerScaleFactor = limitPower / BASE_POWER_KW;
+            if (powerScaleFactor < 0.2) powerScaleFactor = 0.2;
+
+            if (currentMode === "AE" && aeRecommendations[matKey]) {
+                var d = aeRecommendations[matKey];
+                document.getElementById('toolD').value      = d.defD;
+                document.getElementById('toolZ').value      = d.z;
+                document.getElementById('inputV').value     = d.v;
+                document.getElementById('inputFz').value    = d.fz;
+                document.getElementById('inputAePer').value = d.baseAeP2D;
+                document.getElementById('inputAp').value    = (d.defD * 1.5).toFixed(0);
+
+            } else if (currentMode === "FACE" && faceRecommendations[matKey]) {
+                var d = faceRecommendations[matKey];
+                document.getElementById('toolD').value      = d.defD;
+                document.getElementById('toolZ').value      = d.z;
+                document.getElementById('inputV').value     = d.v;
+                document.getElementById('inputFz').value    = d.fz;
+                document.getElementById('inputAePer').value = 75;
+                if (matKey === "700") {
+                    document.getElementById('inputAp').value = d.ap.toFixed(2);
+                } else {
+                    document.getElementById('inputAp').value = (d.ap * powerScaleFactor).toFixed(2);
+                }
+            }
+            updateByV(); // V→SFM→RPM 연쇄 처리
+        }
+
+        function updateCalculations() {
+            var D          = parseFloat(document.getElementById('toolD').value)      || 12;
+            var Z          = parseFloat(document.getElementById('toolZ').value)      || 4;
+            var S          = parseFloat(document.getElementById('inputS').value)     || 0;
+            var fz         = parseFloat(document.getElementById('inputFz').value)    || 0;
+            var H          = parseFloat(document.getElementById('totalH').value)     || 0;
+            var L          = parseFloat(document.getElementById('totalL').value)     || 0;
+            var W          = parseFloat(document.getElementById('totalW').value)     || 0;
+            var limitPower = parseFloat(document.getElementById('limitPower').value) || 15;
+            var Ap         = parseFloat(document.getElementById('inputAp').value)    || 0;
+            var aePercent  = parseFloat(document.getElementById('inputAePer').value) || 0;
+            var matKey     = document.getElementById('selectMat').value;
+
+            if (currentMode === "AE") {
+                var baseAe = aeRecommendations[matKey] ? aeRecommendations[matKey].baseAeP2D : 12;
+                if      (Ap <= 0.5 * D) { aePercent = 100; }
+                else if (Ap >= 2.0 * D) { aePercent = baseAe; }
+                else {
+                    var interp = baseAe + ((2 * D - Ap) / (1.5 * D)) * (25 - baseAe);
+                    aePercent  = Math.min(25, Math.max(baseAe, interp));
+                }
+                document.getElementById('inputAePer').value = aePercent.toFixed(1);
+            }
+
+            var Ae          = D * (aePercent / 100);
+            var F           = fz * Z * S;
+            var depthPasses = (Ap > 0) ? Math.ceil(H / Ap) : 1;
+            var actualAp    = (depthPasses > 0) ? (H / depthPasses) : 0;
+            var widthPasses = Math.max(1, (Ae > 0) ? Math.ceil(W / Ae) : 1);
+            var totalPasses  = depthPasses * widthPasses;
+            var totalPathLen = L * totalPasses;
+
+            // 가공 시간
+            var totalTimeMinutes = (F > 0) ? (totalPathLen / F) : 0;
+            var secondsTotal     = Math.round(totalTimeMinutes * 60);
+            var hours = Math.floor(secondsTotal / 3600);
+            var mins  = Math.floor((secondsTotal % 3600) / 60);
+            var secs  = secondsTotal % 60;
+            var timeStr = "";
+            if (hours > 0)            timeStr += hours + "시간 ";
+            if (hours > 0 || mins > 0) timeStr += mins  + "분 ";
+            timeStr += secs + "초";
+
+            // 동력 / 부하율
+            var netPower = (Ap * Ae * F) / 18000;
+            var loadRate = limitPower > 0 ? (netPower / limitPower) * 100 : 0;
+            var loadClass = "load-optimal", loadStatusText = "최적 가공";
+            if      (loadRate > 37.5) { loadClass = "load-danger"; loadStatusText = "위험"; }
+            else if (loadRate > 25.0) { loadClass = "load-warn";   loadStatusText = "주의"; }
+            else if (loadRate > 12.5) { loadClass = "load-stable"; loadStatusText = "안정"; }
+
+            var areaM2   = (L * W * depthPasses) / 1000000;
+            var totalWh  = (netPower * (secondsTotal / 3600)) * 1000;
+
+            // ★ 재질별 비중 적용 중량 계산
+            //    부피(mm³) = L × W × H
+            //    1 cm³ = 1000 mm³  →  부피(cm³) = 부피(mm³) / 1000
+            //    1 kg  = 1000 g    →  중량(kg)  = 부피(cm³) × 비중(g/cm³) / 1000
+            //                      = (L × W × H × density) / 1,000,000
+            var density      = materialDensity[matKey]      || 7.85;
+            var densityLabel = materialDensityLabel[matKey] || "Steel · 비중 7.85 g/cm³";
+            var weightKg     = (L * W * H * density) / 1000000;
+
+            // 결과 표시
+            document.getElementById('resRPM').innerHTML    = Math.round(S) + " RPM";
+            document.getElementById('resFeed').innerHTML   = Math.round(F) + " mm/min";
+            document.getElementById('resAe').innerHTML     = Ae.toFixed(2) + " mm";
+            document.getElementById('resPower').innerHTML  = netPower.toFixed(2) + " kW";
+            var resLoadEl = document.getElementById('resLoad');
+            resLoadEl.innerHTML  = loadRate.toFixed(1) + " % (" + loadStatusText + ")";
+            resLoadEl.className  = "result-value " + loadClass;
+            document.getElementById('resAp').innerHTML      = actualAp.toFixed(2) + " mm";
+            document.getElementById('resPathLen').innerHTML = totalPathLen.toFixed(1) + " mm";
+            document.getElementById('resArea').innerHTML    = areaM2.toFixed(3) + " ㎡";
+            document.getElementById('resWh').innerHTML      = totalWh.toFixed(1) + " Wh";
+
+            var V_cur = parseFloat(document.getElementById('inputV').value) || 0;
+            var sfmCur = sfmFromV(V_cur);
+
+            // 하단 배너 (재질 비중 정보 포함)
+            var bannerHtml =
+                "<div class='banner-line color-green' style='display:flex; align-items:center;'>⏱️ 최종 가공 완료 예측 시간:&nbsp;&nbsp;<span class='time-highlight'>" + timeStr + "</span></div>" +
+                "<div class='banner-line' style='display:flex; align-items:center;'>" +
+                    "<span style='color:#fde68a; font-weight:900;'>&#9733; SFM:&nbsp;</span>" +
+                    "<span style='color:#fcd34d; font-size:20px; font-weight:900;'>" + sfmCur + " ft/min</span>" +
+                    "&nbsp;&nbsp;<span style='color:#4a5568; font-size:13px;'>| Vc " + V_cur.toFixed(1) + " m/min</span>" +
+                "</div>" +
+                "<div class='banner-line color-orange'>🔄 총 복합 가공 분할 횟수: " + totalPasses + " 회 (Z축 깊이 " + depthPasses + "단 × Y축 폭 " + widthPasses + "열 자동 연산)</div>" +
+                "<div class='banner-line color-orange'>📐 1회당 실제 축 절입량(Ap): " + actualAp.toFixed(2) + " mm 자동 보정 적용</div>" +
+                "<div class='banner-line color-green weight-large' style='margin-top:5px;'>⚖️ 소재 예상 중량 [" + densityLabel + "]:&nbsp;&nbsp;<span class='weight-highlight'>" + weightKg.toFixed(2) + " kg</span></div>";
+            document.getElementById('infoBanner').innerHTML = bannerHtml;
+
+            saveSettings();
+        }
+
+        function initApp() {
+            handleResize();
+            loadSettings();
+            var inputs = document.getElementsByTagName('input');
+            for (var i = 0; i < inputs.length; i++) {
+                if (inputs[i].type === 'text') {
+                    inputs[i].onfocus = function() { var self = this; setTimeout(function(){ self.select(); }, 10); };
+                }
+            }
+            changeMode(currentMode, true);
+        }
+
+        window.onload = initApp;
+    </script>
+</head>
+<body>
+
+<div id="mainContainer">
+    <div class="mode-container">
+        <div id="btnModeAE"   class="mode-btn" onclick="changeMode('AE', false)">AE 기준 가공 모드</div>
+        <div id="btnModeFACE" class="mode-btn active" onclick="changeMode('FACE', false)">FACE 기준 가공 모드 (Hi-Feed)</div>
+    </div>
+
+    <div class="main-layout">
+        <div class="left-panel">
+            <div class="input-group bg-dark-1">
+                <label>워크피스 가공 재질 선택</label>
+                <div class="input-wrap">
+                    <select id="selectMat" onchange="onMaterialChange()">
+                        <option value="700">알루미늄 (Al 추천그룹)</option>
+                        <option value="1350">주철 (FC / FCD)</option>
+                        <option value="1800" selected>탄소강 / 구조용강 (Steel)</option>
+                        <option value="1950">&#9733; 티타늄 Ti6Al4V</option>
+                        <option value="2200">합금강 / 고경도 금형강</option>
+                        <option value="2400">스테인리스강 (STS304 계열)</option>
+                        <option value="2750">S내열합금강 (HrC 40~)</option>
+                        <option value="3100">인코넬 625 / 718</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label>공구 직경 (D)</label>
+                <div class="input-wrap"><input type="text" id="toolD" value="26" onkeyup="updateByV()"></div>
+            </div>
+
+            <div class="input-group bg-dark-1">
+                <label>공구 날 수 (Z)</label>
+                <div class="input-wrap"><input type="text" id="toolZ" class="key-input" value="4" onkeyup="updateCalculations()"></div>
+            </div>
+
+            <!-- ★ SFM 입력 (V 앞에 배치 / V 우선순위) -->
+            <div class="input-group bg-sfm">
+                <label style="color:#fcd34d; font-weight:700;">&#9733; SFM (ft/min)</label>
+                <div class="input-wrap"><input type="text" id="inputSFM" value="427" class="sfm-input" onkeyup="updateBySFM()"></div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label>추천 절삭 속도 (V)</label>
+                <div class="input-wrap"><input type="text" id="inputV" value="130" onkeyup="updateByV()"></div>
+            </div>
+
+            <div class="input-group bg-dark-1">
+                <label>주축 회전수 설정 (S)</label>
+                <div class="input-wrap"><input type="text" id="inputS" class="key-input" value="1591" onkeyup="updateByS()"></div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label>추천 날당 이송량 (fz)</label>
+                <div class="input-wrap"><input type="text" id="inputFz" class="key-input" value="0.65" onkeyup="updateCalculations()"></div>
+            </div>
+
+            <div class="input-group bg-dark-1">
+                <label>설비 최고 회전수 (RPM)</label>
+                <div class="input-wrap"><input type="text" id="maxRPM" value="10000" onkeyup="updateByV()"></div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label>축 방향 절입량 (Ap)</label>
+                <div class="input-wrap"><input type="text" id="inputAp" class="key-input" value="0.54" onkeyup="updateCalculations()"></div>
+            </div>
+
+            <div class="input-group bg-dark-1">
+                <label>경 가공 비율 (Ae %)</label>
+                <div class="input-wrap"><input type="text" id="inputAePer" value="75" onkeyup="updateCalculations()"></div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label>총 가공 깊이 (H)</label>
+                <div class="input-wrap"><input type="text" id="totalH" class="key-input" value="30" onkeyup="updateCalculations()"></div>
+            </div>
+
+            <div class="input-group bg-dark-1">
+                <label>가공 가로 길이 (L)</label>
+                <div class="input-wrap"><input type="text" id="totalL" value="200" onkeyup="updateCalculations()"></div>
+            </div>
+
+            <div class="input-group bg-dark-2">
+                <label>가공 세로 폭 (W)</label>
+                <div class="input-wrap"><input type="text" id="totalW" value="50" onkeyup="updateCalculations()"></div>
+            </div>
+
+            <div class="input-group bg-dark-1" style="margin-bottom:0;">
+                <label>설비 허용 동력 (kW)</label>
+                <div class="input-wrap"><input type="text" id="limitPower" class="power-input" value="15" onkeyup="onMaterialChange()"></div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div class="result-grid">
+                <div class="result-col">
+                    <div class="result-box" style="border-left-color: #38bdf8;">
+                        <div class="result-title">주축 회전수 (S)</div>
+                        <div id="resRPM" class="result-value color-s">0 RPM</div>
+                    </div>
+                    <div class="result-box" style="border-left-color: #fbbf24;">
+                        <div class="result-title">이송 속도 (F)</div>
+                        <div id="resFeed" class="result-value color-f">0 mm/min</div>
+                    </div>
+                    <div class="result-box" style="border-left-color: #f43f5e;">
+                        <div class="result-title">실제 연산 폭 (AE)</div>
+                        <div id="resAe" class="result-value color-ae">0.00 mm</div>
+                    </div>
+                </div>
+
+                <div class="result-col">
+                    <div class="result-box" style="border-left-color: #a78bfa;">
+                        <div class="result-title">가공 소요 동력</div>
+                        <div id="resPower" class="result-value color-p">0.00 kW</div>
+                    </div>
+                    <div class="result-box" style="border-left-color: #10b981;">
+                        <div class="result-title">설비 부하율 (Max 50%)</div>
+                        <div id="resLoad" class="result-value load-optimal">0.0 %</div>
+                    </div>
+                    <div class="result-box" style="border-left-color: #fb923c;">
+                        <div class="result-title">실제 적용 절입량</div>
+                        <div id="resAp" class="result-value color-ap">0.00 mm</div>
+                    </div>
+                </div>
+
+                <div class="result-col">
+                    <div class="result-box" style="border-left-color: #34d399;">
+                        <div class="result-title">공구 경로 전체길이</div>
+                        <div id="resPathLen" class="result-value color-len">0.0 mm</div>
+                    </div>
+                    <div class="result-box" style="border-left-color: #cbd5e1;">
+                        <div class="result-title">가공 완료 전체면적</div>
+                        <div id="resArea" class="result-value color-area">0.000 ㎡</div>
+                    </div>
+                    <div class="result-box" style="border-left-color: #22d3ee;">
+                        <div class="result-title">총 소비 전력량</div>
+                        <div id="resWh" class="result-value color-wh">0.0 Wh</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="infoBanner" class="bottom-banner"></div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

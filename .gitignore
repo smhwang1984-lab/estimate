@@ -1,0 +1,16 @@
+# --- 빌드 산출물 (용량이 크고 언제든 재생성 가능) ---
+build/
+dist/
+exe_release/*.exe
+installer/Output/*.exe
+
+# --- 파이썬 캐시 ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- 임시 작업 폴더 ---
+estimate_v002_035s0nqj/
+
+# --- 엑셀 임시 파일 ---
+~$*
