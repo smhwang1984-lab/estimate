@@ -853,3 +853,33 @@
 ### 미실행 항목
 
 - `C:\Program Files (x86)\Estimate\update` 폴더로의 업데이트 파일 복사는 권한 오류(`Access to the path ... is denied`)로 수행하지 못했다. 관리자 권한이 필요하므로 사용자가 직접 복사하거나 설치 파일을 바로 실행해야 한다.
+
+## 2026-08-05 Estimate 독립 git 저장소 구성
+
+### 배경
+
+- `git`에 저장할 경우 TSERP와 섞일 가능성이 있는지 확인 요청이 있었다.
+- 확인 결과는 다음과 같다.
+  - `Estimate`는 git 저장소가 아니었고, `TSERP`는 `C:\Users\SumH\Codex\TSERP`에 자체 저장소(원격 `github.com/smhwang1984-lab/TSERP.git`)로 존재했다. TSERP 추적 파일에 `Estimate` 흔적은 0건으로 실제 혼입은 없었다.
+  - 다만 `C:\Users\SumH\Codex\.git`이 **내용물 0개인 빈 폴더**로 존재했다. 이 상태에서 `Codex`에서 `git init`을 실행하면 해당 폴더가 재사용되어 `Estimate`, `TSERP`, `NC_Tool_List`, `NEW PY` 등이 한 저장소로 묶일 수 있다. 이번 세션 시작 시 환경 정보가 "git 저장소 true / 브랜치 main"으로 잘못 표시된 원인도 이것으로 보인다.
+
+### 반영 내용
+
+- `Estimate` 폴더를 최상위로 하는 독립 저장소를 만들었다(`git init -b main`, toplevel `C:/Users/SumH/Codex/Estimate`).
+- 원격은 지정하지 않아 로컬 전용이다. TSERP로 잘못 push될 경로 자체를 두지 않았다.
+- `.gitignore`를 작성해 재생성 가능한 빌드 산출물 약 220MB를 제외했다.
+  - 제외: `build/`, `dist/`, `exe_release/*.exe`, `installer/Output/*.exe`, `__pycache__/`, `estimate_v002_035s0nqj/`, 엑셀 임시 파일 `~$*`
+  - 추적: 소스(`machine_estimate_app.py`, `Estimate.py`, HTA 3종), `installer/Setup.iss`, 견적 양식과 2026년도 누적 데이터, `plan.md`, `ver_plan.md` 등 32개 파일
+- 초기 커밋 `dbebfcd` 생성.
+
+### 검증 결과
+
+- `Estimate` 저장소 toplevel이 `Codex`가 아닌 `Estimate`임을 확인했다(상위 폴더로 번지지 않음).
+- 커밋 후 `git status` clean.
+- `TSERP` 저장소는 HEAD(`49ac8da`)와 브랜치(`release/2.1.9-grinding-refresh-fix`)가 그대로이고, 추적 파일 내 `Estimate` 흔적 0건으로 영향이 없음을 확인했다.
+
+### 남은 위험
+
+- `C:\Users\SumH\Codex\.git` 빈 폴더는 아직 그대로다. 삭제하지 않으면 상위 폴더에서 `git init`을 실행했을 때 전체 프로젝트가 한 저장소로 묶이는 사고가 여전히 가능하다.
+- `.claude\settings.local.json`은 사용자 전역 gitignore(`~/.config/git/ignore`)에 의해 제외된다(로컬 설정이므로 정상).
+- 추적 대상에 실제 견적 단가·품번이 담긴 `견적_산정` 엑셀이 포함되어 있다. 향후 공개 원격 저장소에 push할 경우 해당 업무 데이터가 함께 공개된다는 점을 유의해야 한다.
