@@ -1,9 +1,8 @@
-﻿import os
-import queue
+﻿import json
+import os
 import re
 import subprocess
 import sys
-import threading
 import tkinter as tk
 from copy import copy
 from datetime import datetime
@@ -11,7 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import openpyxl
 
-APP_VERSION = "0.0.2"
+APP_VERSION = "0.0.4"
 
 
 class MachineEstimateApp:
@@ -23,20 +22,19 @@ class MachineEstimateApp:
         self.data = []
         self.display_limit = 40
         self.display_page_size = 40
-        self.loaded_file_count = 0
-        self.loaded_card_count = 0
-        self.skipped_file_count = 0
-        self.is_loading = False
+        self.session_restored_count = 0
+        self.session_saved_at = None
         self.is_saving = False
         self.search_after_id = None
         self.selected_nos = set()
-        self.load_queue = queue.Queue()
+        # TSERP(py/web/style.css)와 동일 계열의 딥 차콜/슬레이트 팔레트.
         self.colors = {
-            "bg": "#07111f", "panel": "#0d1b2e", "panel_2": "#10243d", "card": "#132b46",
-            "card_alt": "#173657", "line": "#234a70", "text": "#eaf2ff", "muted": "#9fb3c8",
-            "accent": "#37a2ff", "accent_2": "#7dd3fc", "success_bg": "#123c32",
-            "success_fg": "#86efac", "warn_bg": "#423817", "warn_fg": "#fde68a",
-            "danger_bg": "#4a1d2a", "danger_fg": "#fda4af",
+            "bg": "#11161c", "panel": "#171d25", "panel_2": "#234060", "card": "#18212b",
+            "card_alt": "#1a2535", "line": "#2a3340", "text": "#dde4ec", "muted": "#8b97a7",
+            "accent": "#4fb0ff", "accent_2": "#9cc8ff", "success_bg": "#2c5c44",
+            "success_fg": "#7ddc9e", "warn_bg": "#5a3a1a", "warn_fg": "#ffb648",
+            "danger_bg": "#40222a", "danger_fg": "#ff9aa2",
+            "new_bg": "#5a3a1a", "new_fg": "#ffb648", "new_border": "#8a5a2a",
         }
         self.rates = {
             "m_5axis": 70000, "m_4axis": 50000, "m_3axis": 40000, "m_lathe": 35000,
@@ -46,9 +44,14 @@ class MachineEstimateApp:
         self.setup_ui_scale()
         self.maximize_window()
         self.build_dashboard()
+        self.restore_session_state()
         self.refresh_table(True)
-        self.start_background_load()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(800, self.check_for_update)
+
+    def on_close(self):
+        self.save_session_state()
+        self.root.destroy()
 
     def maximize_window(self):
         try:
@@ -114,7 +117,7 @@ class MachineEstimateApp:
         self.search_var.trace_add("write", lambda *args: self.schedule_refresh())
         ttk.Entry(search, textvariable=self.search_var, width=42).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(search, text="검색 초기화", command=self.clear_search).pack(side=tk.LEFT)
-        tk.Label(search, text="Search는 공백/쉼표로 여러 조건 입력 가능", bg=c["bg"], fg=c["muted"]).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Label(search, text="Search는 품번/품명/기종 대상, 공백/쉼표로 여러 조건 입력 가능", bg=c["bg"], fg=c["muted"]).pack(side=tk.LEFT, padx=(12, 0))
         extra_actions = tk.Frame(search, bg=c["bg"])
         extra_actions.pack(side=tk.RIGHT)
         tk.Label(extra_actions, text="보조 기능", bg=c["bg"], fg=c["muted"], font=self.font_small).pack(side=tk.LEFT, padx=(0, 10))
@@ -142,7 +145,7 @@ class MachineEstimateApp:
         self.card_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def create_blank_item(self, no):
-        return {"no": no, "excel_row": None, "created_at": datetime.now().strftime("%Y-%m-%d"), "source_file": "", "source_month": "", "save_pending": True, "part_no": "", "part_name": "", "comment": "", "possible": "가능", "qty": 1, "material": "", "size": "", "m_5axis": 0.0, "m_4axis": 0.0, "m_3axis": 0.0, "m_lathe": 0.0, "m_general": 0.0, "m_finish": 0.0, "m_cmm": 0.0, "m_grind": 0.0, "m_jig": 0.0, "m_prog": 0.0}
+        return {"no": no, "excel_row": None, "created_at": datetime.now().strftime("%Y-%m-%d"), "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "source_file": "", "source_month": "", "save_pending": True, "part_no": "", "part_name": "", "model": "", "comment": "", "possible": "가능", "qty": 1, "material": "", "size": "", "m_5axis": 0.0, "m_4axis": 0.0, "m_3axis": 0.0, "m_lathe": 0.0, "m_general": 0.0, "m_finish": 0.0, "m_cmm": 0.0, "m_grind": 0.0, "m_jig": 0.0, "m_prog": 0.0}
 
     def get_next_no(self):
         return max([item["no"] for item in self.data], default=0) + 1
@@ -165,46 +168,47 @@ class MachineEstimateApp:
         except (TypeError, ValueError):
             return default
 
-    def start_background_load(self):
-        self.is_loading = True
-        self.summary_var.set("작성 데이터를 불러오는 중입니다...")
-        threading.Thread(target=self.load_existing_cards_worker, daemon=True).start()
-        self.root.after(100, self.poll_load_queue)
+    def get_session_state_path(self):
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "MachineEstimate", "session_state.json")
 
-    def load_existing_cards_worker(self):
-        target = self.get_year_source_dir()
-        if not os.path.isdir(target):
-            self.load_queue.put(([], 0, 0, 0))
-            return
-        loaded_items, loaded, skipped = [], 0, 0
-        files = self.iter_year_workbooks(target)
-        output_today = os.path.abspath(self.get_dated_output_path(create_dir=False))
-        for file_path in files:
-            try:
-                keep_rows = os.path.abspath(file_path) == output_today
-                cards = self.read_cards_from_workbook(file_path, keep_excel_rows=keep_rows, mark_pending=False)
-                loaded_items.extend(cards)
-                loaded += len(cards)
-            except Exception:
-                skipped += 1
-        self.load_queue.put((loaded_items, len(files), loaded, skipped))
-
-    def poll_load_queue(self):
+    def save_session_state(self):
+        # 엑셀 양식은 입력/출력용으로만 쓰고, 세션 데이터는 이 JSON 파일에 별도로 저장한다.
+        state_path = self.get_session_state_path()
+        payload = {
+            "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "rates": self.rates,
+            "selected_nos": sorted(self.selected_nos),
+            "search": self.search_var.get() if hasattr(self, "search_var") else "",
+            "items": [item for item in self.data if self.has_item_data(item)],
+        }
         try:
-            loaded_items, file_count, loaded_count, skipped_count = self.load_queue.get_nowait()
-        except queue.Empty:
-            if self.is_loading:
-                self.root.after(100, self.poll_load_queue)
+            os.makedirs(os.path.dirname(state_path), exist_ok=True)
+            with open(state_path, "w", encoding="utf-8") as state_file:
+                json.dump(payload, state_file, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def restore_session_state(self):
+        # 프로그램 실행 시 이전에 저장된 JSON 세션으로 화면 상태를 완전히 덮어써서 복원한다.
+        try:
+            with open(self.get_session_state_path(), "r", encoding="utf-8") as state_file:
+                payload = json.load(state_file)
+        except (OSError, ValueError):
             return
-        next_no = self.get_next_no()
-        for offset, item in enumerate(loaded_items):
-            item["no"] = next_no + offset
-            self.data.append(item)
-        self.loaded_file_count = file_count
-        self.loaded_card_count = loaded_count
-        self.skipped_file_count = skipped_count
-        self.is_loading = False
-        self.refresh_table(True)
+        restored = []
+        for raw_item in payload.get("items", []):
+            item = self.create_blank_item(raw_item.get("no", 0))
+            item.update(raw_item)
+            restored.append(item)
+        self.data = restored
+        self.rates.update(payload.get("rates", {}))
+        self.selected_nos = set(payload.get("selected_nos", []))
+        if hasattr(self, "search_var"):
+            self.search_var.set(payload.get("search", ""))
+        self.session_restored_count = len(restored)
+        self.session_saved_at = payload.get("saved_at")
+
     def schedule_refresh(self):
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)
@@ -217,21 +221,12 @@ class MachineEstimateApp:
     def get_filtered_items(self):
         query = self.search_var.get().strip() if hasattr(self, "search_var") else ""
         all_items = [item for item in self.data if self.has_item_data(item)]
+        # 최근에 업로드/작성된 카드가 맨 위로 오도록 added_at 내림차순 정렬한다.
+        all_items.sort(key=lambda item: item.get("added_at", ""), reverse=True)
         visible_items = [item for item in all_items if self.item_matches_search(item, query)]
         return all_items, visible_items
 
-    def get_year_source_dir(self):
-        return os.path.join(self.get_estimate_root_dir(), "2026년도")
-
-    def iter_year_workbooks(self, root_dir):
-        files = []
-        for current_root, _, names in os.walk(root_dir):
-            for name in names:
-                if name.lower().endswith(".xlsx") and not name.startswith("~$"):
-                    files.append(os.path.join(current_root, name))
-        return sorted(files)
-
-    def read_cards_from_workbook(self, file_path, keep_excel_rows=False, mark_pending=True):
+    def read_cards_from_workbook(self, file_path):
         wb = openpyxl.load_workbook(file_path, data_only=False)
         if "기계" not in wb.sheetnames:
             raise ValueError("선택한 파일에서 '기계' 시트를 찾을 수 없습니다.")
@@ -246,11 +241,10 @@ class MachineEstimateApp:
             if not self.row_has_input_data(ws, row):
                 continue
             item = self.create_blank_item(len(cards) + 1)
-            item["excel_row"] = row if keep_excel_rows else None
             item["created_at"] = created_at
             item["source_file"] = os.path.basename(abs_path)
             item["source_month"] = source_month
-            item["save_pending"] = mark_pending
+            item["save_pending"] = True
             item["part_no"] = str(ws.cell(row=row, column=2).value or "")
             item["part_name"] = str(ws.cell(row=row, column=3).value or "")
             item["comment"] = str(ws.cell(row=row, column=4).value or "")
@@ -269,7 +263,7 @@ class MachineEstimateApp:
         if not file_path:
             return
         try:
-            cards = self.read_cards_from_workbook(file_path, keep_excel_rows=False, mark_pending=True)
+            cards = self.read_cards_from_workbook(file_path)
         except Exception as exc:
             messagebox.showerror("업로드 오류", f"선택한 파일을 불러오지 못했습니다.\n\n{exc}")
             return
@@ -284,6 +278,7 @@ class MachineEstimateApp:
             item["excel_row"] = None
             item["save_pending"] = True
             self.data.append(item)
+        self.save_session_state()
         self.refresh_table(True)
         messagebox.showinfo("업로드 완료", f"{len(cards)}개 항목을 카드로 불러왔습니다.\n저장하면 오늘 날짜 누적 파일에 추가됩니다.")
 
@@ -295,8 +290,8 @@ class MachineEstimateApp:
         if not query:
             return True
         terms = [term.lower() for term in re.split(r"[\s,]+", query.strip()) if term]
-        sum_time, _, final_price = self.calc_row(item)
-        values = [item.get("created_at", ""), item.get("source_month", ""), item.get("source_file", ""), item.get("part_no", ""), item.get("part_name", ""), item.get("possible", ""), item.get("material", ""), item.get("size", ""), item.get("comment", ""), str(item.get("qty", "")), f"{sum_time:.1f}", str(final_price)]
+        # 검색 범위는 품번/품명/기종 3종류로 한정한다(요청에 따라 Material/Size/Coment/금액 등은 제외).
+        values = [item.get("part_no", ""), item.get("part_name", ""), item.get("model", "")]
         haystack = " ".join(str(v).lower() for v in values)
         return all(term in haystack for term in terms)
 
@@ -319,10 +314,10 @@ class MachineEstimateApp:
 
     def get_status_colors(self, status):
         if status == "불가":
-            return self.colors["danger_bg"], self.colors["danger_fg"], "#7f1d1d"
+            return self.colors["danger_bg"], self.colors["danger_fg"], "#e05561"
         if status == "검토필요":
-            return self.colors["warn_bg"], self.colors["warn_fg"], "#854d0e"
-        return self.colors["success_bg"], self.colors["success_fg"], "#166534"
+            return self.colors["warn_bg"], self.colors["warn_fg"], "#d88a4f"
+        return self.colors["success_bg"], self.colors["success_fg"], "#3ecf8e"
 
     def calc_row(self, item):
         times = [item["m_5axis"], item["m_4axis"], item["m_3axis"], item["m_lathe"], item["m_general"], item["m_finish"], item["m_cmm"], item["m_grind"], item["m_jig"], item["m_prog"]]
@@ -346,17 +341,16 @@ class MachineEstimateApp:
         today = datetime.now().strftime("%Y-%m-%d")
         search_note = f"  |  검색 결과 {len(visible_items)}건" if query else ""
         select_note = f"  |  선택 {selected_count}건"
-        load_state = "로드 중" if self.is_loading else "자동업로드"
-        load_note = f"  |  {load_state} {self.loaded_card_count}건/{self.loaded_file_count}파일"
-        self.summary_var.set(f"작성일 {today}  |  카드 {len(all_items)}건  |  총 견적금액 {total_amount:,}원{search_note}{select_note}{load_note}")
-        if not self.data and self.is_loading:
-            self.render_empty_message("기계 시트 자료를 불러오는 중입니다.", "잠시 후 카드가 자동으로 표시됩니다.")
-            return
+        if self.session_saved_at:
+            session_note = f"  |  세션 복원 {self.session_restored_count}건 (저장 {self.session_saved_at})"
+        else:
+            session_note = "  |  새 세션 (저장된 데이터 없음)"
+        self.summary_var.set(f"작성일 {today}  |  카드 {len(all_items)}건  |  총 견적금액 {total_amount:,}원{search_note}{select_note}{session_note}")
         if not all_items:
             self.render_empty_message("아직 작성된 견적 카드가 없습니다.", "상단의 '기계 시트 업로드' 또는 '새 카드 추가'를 사용하세요.")
             return
         if not visible_items:
-            self.render_empty_message("검색 결과가 없습니다.", "품번, 품명, 상태, Material, Size, Coment, 작성일, 원본 파일명으로 검색할 수 있습니다.")
+            self.render_empty_message("검색 결과가 없습니다.", "품번, 품명, 기종으로 검색할 수 있습니다.")
             return
         for item in visible_items[:self.display_limit]:
             self.render_card(item)
@@ -372,6 +366,23 @@ class MachineEstimateApp:
         tk.Label(empty, text=title, bg=c["card"], fg=c["text"], font=(self.font_family, 17, "bold")).pack(anchor="w")
         tk.Label(empty, text=detail, bg=c["card"], fg=c["muted"]).pack(anchor="w", pady=(8, 0))
 
+    def render_selection_checkbox(self, parent, no, checked):
+        # 기본 tk 체크박스 표시기(Windows에서 ~13px, 폰트를 키워도 커지지 않음)의 2배인
+        # 26px 정사각형을 Frame(pack_propagate 고정)으로 직접 그려서 클릭 토글한다.
+        c = self.colors
+        size = 26
+        box_bg = c["accent"] if checked else c["card_alt"]
+        box_fg = c["bg"] if checked else c["muted"]
+        holder = tk.Frame(parent, width=size, height=size, bg=box_bg, highlightthickness=1, highlightbackground=c["line"], cursor="hand2")
+        holder.pack_propagate(False)
+        glyph = tk.Label(holder, text=("V" if checked else ""), bg=box_bg, fg=box_fg, font=(self.font_family, 13, "bold"))
+        glyph.pack(expand=True)
+        toggle = lambda event, no=no, checked=checked: self.toggle_item_selection(no, not checked)
+        holder.bind("<Button-1>", toggle)
+        glyph.bind("<Button-1>", toggle)
+        holder.is_control = True
+        return holder
+
     def render_card(self, item):
         c = self.colors
         sum_time, _, final_price = self.calc_row(item)
@@ -382,16 +393,22 @@ class MachineEstimateApp:
         tk.Frame(card, bg=status_fg, width=7).grid(row=0, column=0, rowspan=4, sticky="nsw", padx=(0, 14))
         head = tk.Frame(card, bg=c["card"])
         head.grid(row=0, column=1, sticky="ew")
-        head.columnconfigure(1, weight=1)
-        selected_var = tk.BooleanVar(value=item["no"] in self.selected_nos)
-        tk.Checkbutton(head, text="선택", variable=selected_var, command=lambda no=item["no"], var=selected_var: self.toggle_item_selection(no, var.get()), bg=c["card"], fg=c["text"], activebackground=c["card"], activeforeground=c["text"], selectcolor=c["panel_2"], font=self.font_normal).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
-        tk.Label(head, text=item["part_no"] or f"NO. {item['no']} 미입력 카드", bg=c["card"], fg=c["text"], font=(self.font_family, 17, "bold")).grid(row=0, column=1, sticky="w")
-        tk.Label(head, text=item["part_name"] or "품명 미입력", bg=c["card"], fg=c["muted"], font=self.font_bold).grid(row=1, column=1, sticky="w", pady=(2, 0))
-        tk.Label(head, text=item["possible"], bg=status_bg, fg=status_fg, font=self.font_bold, padx=12, pady=4).grid(row=0, column=2, rowspan=2, sticky="e", padx=(10, 0))
+        head.columnconfigure(2, weight=1)
+        self.render_selection_checkbox(head, item["no"], item["no"] in self.selected_nos).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 8))
+        tk.Label(head, text="선택", bg=c["card"], fg=c["muted"], font=self.font_small).grid(row=0, column=1, rowspan=2, sticky="w", padx=(0, 12))
+        title_box = tk.Frame(head, bg=c["card"])
+        title_box.grid(row=0, column=2, rowspan=2, sticky="w")
+        title_row = tk.Frame(title_box, bg=c["card"])
+        title_row.pack(anchor="w")
+        tk.Label(title_row, text=item["part_no"] or f"NO. {item['no']} 미입력 카드", bg=c["card"], fg=c["text"], font=(self.font_family, 17, "bold")).pack(side=tk.LEFT)
+        if item.get("save_pending"):
+            tk.Label(title_row, text="NEW", bg=c["new_bg"], fg=c["new_fg"], font=self.font_small, padx=6, pady=1, highlightthickness=1, highlightbackground=c["new_border"]).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(title_box, text=item["part_name"] or "품명 미입력", bg=c["card"], fg=c["muted"], font=self.font_bold).pack(anchor="w", pady=(2, 0))
+        tk.Label(head, text=item["possible"], bg=status_bg, fg=status_fg, font=self.font_bold, padx=12, pady=4).grid(row=0, column=3, rowspan=2, sticky="e", padx=(10, 0))
         body = tk.Frame(card, bg=c["card"])
         body.grid(row=1, column=1, sticky="ew", pady=(12, 0))
         # 기계 시트 대상 엑셀 파일 정보는 메인 화면에 노출하지 않고 팝업창에서만 표기한다.
-        facts = [("작성일", item["created_at"]), ("Qty", item["qty"]), ("Material", item["material"] or "-"), ("Size", item["size"] or "-"), ("시간합계", f"{sum_time:.1f} h"), ("최종단가", f"{final_price:,} 원")]
+        facts = [("기종", item["model"] or "-"), ("작성일", item["created_at"]), ("Qty", item["qty"]), ("Material", item["material"] or "-"), ("Size", item["size"] or "-"), ("시간합계", f"{sum_time:.1f} h"), ("최종단가", f"{final_price:,} 원")]
         for col in range(len(facts)):
             body.columnconfigure(col, weight=1)
         for idx, (label, value) in enumerate(facts):
@@ -407,6 +424,9 @@ class MachineEstimateApp:
 
     def bind_card_click(self, widget, no):
         # 카드 안쪽 어디를 클릭해도 팝업이 열리도록 하위 위젯까지 재귀로 연결한다.
+        # is_control로 표시된 위젯(예: 커스텀 체크박스)은 자체 클릭 동작을 덮어쓰지 않도록 건너뛴다.
+        if getattr(widget, "is_control", False):
+            return
         if not isinstance(widget, (ttk.Button, tk.Button, tk.Checkbutton, ttk.Checkbutton)):
             widget.bind("<Button-1>", lambda event, card_no=no: self.open_popup(card_no))
         for child in widget.winfo_children():
@@ -653,21 +673,25 @@ class MachineEstimateApp:
         fields["part_name"] = tk.StringVar(value=item["part_name"])
         ttk.Entry(info, textvariable=fields["part_name"], width=18).grid(row=0, column=3, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(info, text="Material").grid(row=1, column=0, sticky="e", padx=6, pady=6)
+        ttk.Label(info, text="기종").grid(row=1, column=0, sticky="e", padx=6, pady=6)
+        fields["model"] = tk.StringVar(value=item["model"])
+        ttk.Entry(info, textvariable=fields["model"], width=18).grid(row=1, column=1, sticky="ew", padx=6, pady=6)
+
+        ttk.Label(info, text="Material").grid(row=1, column=2, sticky="e", padx=6, pady=6)
         fields["material"] = tk.StringVar(value=item["material"])
-        ttk.Entry(info, textvariable=fields["material"], width=18).grid(row=1, column=1, sticky="ew", padx=6, pady=6)
+        ttk.Entry(info, textvariable=fields["material"], width=18).grid(row=1, column=3, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(info, text="수량(Qty)").grid(row=1, column=2, sticky="e", padx=6, pady=6)
+        ttk.Label(info, text="수량(Qty)").grid(row=2, column=0, sticky="e", padx=6, pady=6)
         fields["qty"] = tk.StringVar(value=str(item["qty"]))
-        ttk.Entry(info, textvariable=fields["qty"], width=18).grid(row=1, column=3, sticky="ew", padx=6, pady=6)
+        ttk.Entry(info, textvariable=fields["qty"], width=18).grid(row=2, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Label(info, text="가능여부").grid(row=2, column=0, sticky="e", padx=6, pady=6)
+        ttk.Label(info, text="가능여부").grid(row=2, column=2, sticky="e", padx=6, pady=6)
         fields["possible"] = tk.StringVar(value=item["possible"])
-        ttk.Combobox(info, textvariable=fields["possible"], values=["가능", "불가", "검토필요"], state="readonly", width=15).grid(row=2, column=1, sticky="w", padx=6, pady=6)
+        ttk.Combobox(info, textvariable=fields["possible"], values=["가능", "불가", "검토필요"], state="readonly", width=15).grid(row=2, column=3, sticky="w", padx=6, pady=6)
 
-        ttk.Label(info, text="Comment").grid(row=2, column=2, sticky="e", padx=6, pady=6)
+        ttk.Label(info, text="Comment").grid(row=3, column=0, sticky="e", padx=6, pady=6)
         fields["comment"] = tk.StringVar(value=item["comment"])
-        ttk.Entry(info, textvariable=fields["comment"], width=18).grid(row=2, column=3, sticky="ew", padx=6, pady=6)
+        ttk.Entry(info, textvariable=fields["comment"], width=18).grid(row=3, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
 
         size_box = ttk.LabelFrame(left, text="Size (소재 규격) 입력", padding=10)
         size_box.pack(fill=tk.X)
@@ -854,6 +878,7 @@ class MachineEstimateApp:
                 rate_values[key] = rate_value
             item["part_no"] = fields["part_no"].get().strip()
             item["part_name"] = fields["part_name"].get().strip()
+            item["model"] = fields["model"].get().strip()
             item["material"] = fields["material"].get().strip()
             item["size"] = final_size_var.get().strip()
             item["comment"] = fields["comment"].get().strip()
@@ -866,11 +891,13 @@ class MachineEstimateApp:
             if export_on_save:
                 if not self.export_items_to_excel([item], default_name=f"신규견적_{datetime.now():%Y-%m-%d}.xlsx", parent=popup):
                     return
+            self.save_session_state()
             self.refresh_table(True)
             popup.destroy()
             if export_on_save and not messagebox.askyesno("신규 입력 반영", "방금 다운로드한 신규 항목을 현재 카드 목록에도 유지하시겠습니까?", parent=self.root):
                 self.data = [row for row in self.data if row["no"] != no]
                 self.selected_nos.discard(no)
+                self.save_session_state()
                 self.refresh_table(True)
                 return
             if next_item:
@@ -947,6 +974,7 @@ class MachineEstimateApp:
         for item in save_items:
             item["source_file"] = os.path.basename(output_path)
             item["source_month"] = os.path.basename(os.path.dirname(output_path))
+        self.save_session_state()
         messagebox.showinfo("누적 저장 완료", f"{saved_count}개 항목을 날짜별 파일에 누적 저장했습니다.\n\n{output_path}")
 
     def export_items_to_excel(self, items, default_name=None, parent=None):

@@ -883,3 +883,107 @@
 - `C:\Users\SumH\Codex\.git` 빈 폴더는 아직 그대로다. 삭제하지 않으면 상위 폴더에서 `git init`을 실행했을 때 전체 프로젝트가 한 저장소로 묶이는 사고가 여전히 가능하다.
 - `.claude\settings.local.json`은 사용자 전역 gitignore(`~/.config/git/ignore`)에 의해 제외된다(로컬 설정이므로 정상).
 - 추적 대상에 실제 견적 단가·품번이 담긴 `견적_산정` 엑셀이 포함되어 있다. 향후 공개 원격 저장소에 push할 경우 해당 업무 데이터가 함께 공개된다는 점을 유의해야 한다.
+
+## 2026-08-08 v0.0.3 실행 파일명 변경 / run.bat / JSON 세션 저장
+
+### 요청 내용 (`nextup v.0.0.2.MD`, 사용자가 새 내용으로 덮어씀)
+
+- git 이력상 이 파일에 있던 이전 v0.0.2 요청(업데이트 반복 오류, 설치 경로, TSERP UI, 입력창 개선)은 `ver_plan.md`의 2026-08-05 기록대로 이미 전부 반영이 끝난 상태였다. 사용자가 파일을 4줄짜리 새 요청으로 덮어썼다.
+1. 실행 파일명을 `Estimate`로 변경.
+2. 저장된 엑셀 양식으로 견적카드 생성 + 신규 견적 작성/양식 다운로드 (기존 `machine_estimate_app.py`가 이미 제공하는 기능이라 별도 구현 없이 유지로 판단).
+3. 임시 실행 수단으로 `run.bat` 추가.
+4. 입력 내용을 `.js`/`.json` 방식으로 저장해 실행 시마다 마지막 저장 단계가 복원되게 할 것.
+- 승인 과정에서 사용자가 3번을 추가로 확정: "완전히 덮어써줘. 양식은 출력 및 입력 양식으로 사용할 예정. 데이터 저장은 별개." → 엑셀 양식은 입력 화면 구조 참조 및 출력(다운로드/누적 저장)용으로만 쓰고, 실제 세션 데이터 저장/복원은 JSON으로 완전히 분리하며, 복원 시 JSON 상태가 이전 화면 상태를 완전히 대체(병합 아님)한다.
+
+### 반영 내용
+
+1. 실행 파일명 변경
+   - `Machine_Estimate.spec`의 `EXE(name=...)`를 `'Estimate'`로 변경.
+   - `installer/Setup.iss`: `MyAppExeName`을 `Estimate.exe`로, `[Files] Source`를 `exe_release\Estimate.exe`로 변경. 기존 `AppId`가 고정되어 있어 업그레이드 설치 시 구버전 `Machine_Estimate.exe`가 설치 폴더에 그대로 남는 문제가 있어, `#define MyOldAppExeName "Machine_Estimate.exe"`와 `[InstallDelete] Type: files; Name: "{app}\{#MyOldAppExeName}"`를 추가해 업그레이드 설치 시 구 파일을 제거하도록 했다.
+2. `run.bat` 추가
+   - 저장소 루트에 배치, `%~dp0`로 스크립트 위치로 이동 후 실행되어 더블클릭 위치에 무관하게 동작.
+   - `python` PATH 존재 여부 확인 후 없으면 안내 메시지 출력.
+   - `openpyxl` 임포트 실패 시 `pip install`로 자동 설치.
+   - `pythonw`가 있으면 콘솔창 없이 백그라운드 실행, 없으면 `python`으로 실행.
+   - 최초 한글 메시지로 작성했다가 CP949 배치 파서가 UTF-8 한글 바이트를 오인식해 `if/else` 블록이 깨지는 문제(같은 프로그램이 중복 실행됨)를 실제로 재현·확인해 전체 메시지를 영문으로 교체했다.
+3. JSON 세션 저장/복원 (엑셀 자동 스캔 로드 완전 대체)
+   - 기존에는 실행할 때마다 `견적_산정\2026년도` 폴더 전체를 백그라운드 스레드로 스캔해 모든 엑셀의 카드를 자동으로 불러왔다(`start_background_load`/`load_existing_cards_worker`/`poll_load_queue`/`get_year_source_dir`/`iter_year_workbooks`). 이 방식과 관련 상태(`is_loading`, `loaded_file_count`, `loaded_card_count`, `skipped_file_count`, `load_queue`)를 전부 제거했다.
+   - `get_session_state_path()`(`%LOCALAPPDATA%\MachineEstimate\session_state.json`), `save_session_state()`, `restore_session_state()`를 추가했다. 저장 대상은 `has_item_data()`로 걸러낸 실제 입력이 있는 카드, 공정별 단가(`self.rates`), 선택된 항목 번호, 검색어다.
+   - 프로그램 시작 시 `restore_session_state()`가 JSON 파일이 있으면 그 내용으로 `self.data`를 완전히 덮어써서 복원하고(병합 아님), 없으면 빈 상태로 시작한다.
+   - 저장 시점: 팝업에서 항목 저장(`save_and_close`, 신규 입력 다운로드 취소 분기 포함), `기계 시트 업로드`로 카드 추가, `날짜별 누적 저장` 완료 후, 그리고 창을 닫을 때(`WM_DELETE_WINDOW` → `on_close`)에 `save_session_state()`를 호출한다.
+   - `read_cards_from_workbook()`은 백그라운드 스캔용으로 쓰던 `keep_excel_rows`/`mark_pending` 매개변수를 제거했다(남은 유일한 호출자인 `기계 시트 업로드`가 항상 같은 값을 쓰고 있었다).
+   - 화면 상단 요약 문구의 "자동업로드 N건/M파일"을 "세션 복원 N건 (저장 YYYY-MM-DD HH:MM:SS)" 또는 "새 세션 (저장된 데이터 없음)"으로 교체했다. `기계 시트 업로드`, `날짜별 누적 저장`, `신규 입력 다운로드`, `선택 다운로드` 등 엑셀 입출력 기능은 그대로 유지했다.
+4. 버전 갱신
+   - `machine_estimate_app.py`의 `APP_VERSION`을 `0.0.3`으로, `installer\Setup.iss`의 `MyAppVersion`을 `0.0.3`으로 올렸다.
+
+### 검증 결과
+
+- `python -m py_compile machine_estimate_app.py` 통과.
+- 백그라운드 로드 제거 후 잔여 참조(`is_loading`, `load_queue`, `loaded_file_count` 등, `keep_excel_rows`, `mark_pending`)가 없는지 grep으로 재확인.
+- 별도 스크립트로 세션 저장/복원 스모크 테스트 수행: 임시 `LOCALAPPDATA`로 앱 1회 기동(세션 파일 없음 → `session_saved_at is None`, `data == []` 확인) → 항목 1건 추가 후 `save_session_state()` → JSON 파일에 해당 항목이 기록됨을 확인 → 앱을 새로 기동해 `restore_session_state()`로 동일 항목이 복원되고 `session_restored_count == 1`, `session_saved_at`이 채워짐을 확인. 실사용자 `%LOCALAPPDATA%`는 건드리지 않았다(임시 디렉터리로 격리).
+- `run.bat`을 실제로 실행해 `Estimate.exe`가 아닌 소스(`machine_estimate_app.py`) 기준으로 `pythonw`가 정상 기동됨을 프로세스 목록(`Get-CimInstance Win32_Process`)으로 확인했다(WindowsApps 실행 별칭이 실제 `pythoncore-3.14-64\pythonw.exe`를 자식 프로세스로 재실행하는 구조라 프로세스가 2개로 보이는 것은 정상이며, 앱 인스턴스는 1개다). 최초 한글 버전은 이 과정에서 `if/else`가 깨져 중복 실행되는 버그를 발견해 영문 버전으로 교체 후 재검증했고, 테스트로 띄운 프로세스는 모두 종료했으며 실사용자 `%LOCALAPPDATA%\MachineEstimate`에는 아무 파일도 남지 않았음을 확인했다.
+- `python -m PyInstaller Machine_Estimate.spec --noconfirm` 재빌드 성공 → `dist\Estimate.exe` 생성 → `exe_release\Estimate.exe`로 복사(기존 `Machine_Estimate.exe`는 애초에 `exe_release`에 없었음).
+- `ISCC.exe installer\Setup.iss` 컴파일 성공 → `installer\Output\MachineEstimate_Setup_v0.0.3.exe` 생성.
+
+- 빌드된 `exe_release\Estimate.exe`를 직접 실행해 정상 기동(`Get-CimInstance Win32_Process`로 프로세스 확인)까지 추가로 확인했다. 테스트 프로세스는 강제 종료했고(`WM_DELETE_WINDOW`를 거치지 않는 강제 종료라 `on_close` 저장이 실행되지 않음), 실사용자 `%LOCALAPPDATA%\MachineEstimate`에는 흔적이 남지 않았음을 재확인했다.
+
+### 미실행 항목
+
+- 실제 설치(관리자 권한 필요)를 통해 구버전 `Machine_Estimate.exe`가 `[InstallDelete]`로 정상 제거되고 `Estimate.exe`만 남는지는 이번 턴에서 실행 확인하지 못했다. 기존 v0.0.2가 설치되어 있다면 사용자가 새 설치 파일을 직접 실행해 확인이 필요하다.
+
+## 2026-08-08 v0.0.4 TSERP UI 색상 / 카드 정렬·NEW 표시 / 체크박스 확대 / 검색 범위 축소
+
+### 배경
+
+- v0.0.3 작업 도중 `nextup v.0.0.2.MD`가 삭제되고 `nextup v.0.0.4.MD`가 새로 생겨 있는 것을 발견했다(사용자가 대화 밖에서 파일을 교체함). 커밋 여부를 묻는 사용자 질문에 "이 저장소는 이미 TSERP와 독립"이라고 답하면서 새 요청 파일을 같이 확인했다.
+
+### 요청 내용 (`nextup v.0.0.4.MD`)
+
+1. UI를 TSERP와 동일한 색상으로.
+2. 카드 정렬 순서: 먼저 업로드/입력된 카드는 아래로, 최근 업로드/작성된 카드는 위로.
+3. 신규로 업로드/작성된 카드에 NEW 마크.
+4. 체크박스 크기를 현재의 2배로.
+5. 검색을 "조임쇠 검색"으로 — 예: 품번이 `A34444`일 때 `444`만 검색해도 444가 포함된 카드가 표기되게.
+
+### 확인/조율 과정
+
+- 항목 5는 실제로 이미 동작하고 있었다(`item_matches_search`가 이미 부분 문자열 매칭). 다만 검색 대상에 계산된 금액·시간까지 포함되어 있어, 품번에 `444`가 없어도 금액이 `444,000원`인 무관한 카드가 함께 걸리는 오탐을 실제로 재현해 확인했다. 이를 알리고 검색 범위를 어떻게 할지 물었고, 사용자가 "검색은 품번 품명 기종 3종류 안에서만 검색 되게 설정"으로 확정했다.
+- "기종"은 기존 데이터 필드(품번/품명/Coment/가능여부/Qty/Material/Size)에 없어 사용자에게 확인했고, "새 필드 추가 필요"로 답변받았다. 이어서 이 필드를 다운로드용 `견적용.xlsx`에도 저장할지 물었고, 기존 양식(A~W열)에 빈 칸이 없어 열을 추가해야 하는 점을 설명한 뒤 "앱(JSON)에만 저장"으로 확정받았다 — 엑셀 업무 양식 구조는 건드리지 않는다.
+- 항목 1(TSERP와 동일 색상)을 반영하기 위해 실제 TSERP 저장소(`C:\Users\SumH\Codex\TSERP\py\web\style.css`, `server/config.py`)에서 실제 사용 중인 색상값을 직접 추출했다(짐작이 아니라 원본 CSS 값 사용).
+
+### 반영 내용
+
+1. TSERP 팔레트 적용
+   - `self.colors`를 TSERP 딥 차콜/슬레이트 계열로 전면 교체: `bg #11161c`, `panel #171d25`, `panel_2 #234060`(TSERP 툴바 버튼 배경), `card #18212b`, `card_alt #1a2535`(TSERP 테이블 헤더 배경), `line #2a3340`, `text #dde4ec`, `muted #8b97a7`, `accent #4fb0ff`, `accent_2 #9cc8ff`.
+   - 상태 배지: 가능 `success_bg #2c5c44`/`success_fg #7ddc9e`, 검토필요 `warn_bg #5a3a1a`/`warn_fg #ffb648`, 불가 `danger_bg #40222a`/`danger_fg #ff9aa2`.
+   - `get_status_colors()`의 카드 테두리색도 TSERP 값(가능 `#3ecf8e`, 검토필요 `#d88a4f`, 불가 `#e05561`)으로 교체했다. `setup_ui_scale()`의 ttk 스타일(`TButton`/`TEntry`/`TCombobox`/`Value.TLabel` 등)과 Combobox 드롭다운 옵션은 모두 `self.colors`를 참조하는 구조라 팔레트 값만 바꿔도 팝업까지 함께 적용된다(별도 하드코딩된 색상 없음을 확인).
+   - `newbadge`용 색상(`new_bg #5a3a1a`/`new_fg #ffb648`/`new_border #8a5a2a`)도 TSERP `.newbadge` 값 그대로 추가했다.
+2. 카드 정렬 (최근 항목이 위로)
+   - `create_blank_item()`에 `added_at`(추가 시각, `YYYY-MM-DD HH:MM:SS`) 필드를 추가했다. `no`는 신규 입력/다음 항목 입력 시 추가 순서를 보장하지 않아 정렬 키로 쓸 수 없었다.
+   - `get_filtered_items()`에서 `all_items`를 `added_at` 내림차순으로 정렬한 뒤 검색 필터를 적용하도록 변경했다.
+   - 기존에 저장된 세션 JSON(`added_at` 필드가 없는 카드)은 `restore_session_state()`가 `create_blank_item()` 기본값(복원 시각)을 덮어쓰지 않은 채 채우므로, 업그레이드 직후 첫 실행에서는 기존 카드들의 상대 순서가 임의(동일 시각으로 묶임)일 수 있음을 확인했다.
+3. NEW 배지
+   - 카드 제목(품번) 옆에 `save_pending`이 True인 카드에만 `NEW` 배지를 표시한다. 날짜별 누적 저장을 하면 `save_pending`이 False로 바뀌어 배지가 자동으로 사라진다. JSON에 저장되는 값이라 재시작해도 유지된다.
+4. 체크박스 2배 크기
+   - Windows 기본 `tk.Checkbutton` 표시기는 폰트를 키워도 커지지 않아(indicatoron 방식이 OS 렌더링에 고정), `render_selection_checkbox()`를 새로 추가해 `pack_propagate(False)`로 크기를 고정한 26px 정사각 `Frame`+`Label`로 직접 그리는 방식으로 교체했다(기존 기본 표시기 약 13px 대비 2배). 클릭 시 `toggle_item_selection()`을 호출해 기존 선택 로직은 그대로 재사용한다.
+   - 이 커스텀 위젯이 `bind_card_click()`의 "카드 아무 데나 클릭하면 팝업 열림" 재귀 바인딩에 덮어써지지 않도록, 위젯에 `is_control = True` 표시를 붙이고 `bind_card_click()`이 이를 만나면 하위 탐색 없이 건너뛰도록 예외 처리를 추가했다.
+5. 기종 필드 추가 및 검색 범위 축소
+   - `create_blank_item()`에 `model`(기종) 필드를 추가했다. 팝업 `기본 정보`에 `기종` 입력칸을 품명 아래에 배치하고(이하 Material/수량/가능여부/Comment 행을 한 칸씩 내림), `save_and_close()`에서 저장하도록 반영했다. 카드 본문에도 `기종` 항목을 추가했다.
+   - 엑셀 저장/다운로드(`_save_items_to_workbook`)에는 반영하지 않았다(사용자 확정: 앱/JSON 전용 필드).
+   - `item_matches_search()`의 검색 대상을 품번/품명/기종 3종류로만 한정했다(기존에 포함되던 Material/Size/Coment/작성일/파일명/시간합계/최종단가는 제외). 검색창 옆 안내 문구와 검색 결과 없음 안내 문구도 이에 맞춰 수정했다.
+6. 버전 갱신
+   - `machine_estimate_app.py`의 `APP_VERSION`을 `0.0.4`로, `installer\Setup.iss`의 `MyAppVersion`을 `0.0.4`로 올렸다.
+
+### 검증 결과
+
+- `python -m py_compile machine_estimate_app.py` 통과.
+- 별도 스크립트로 스모크 테스트 수행(임시 `LOCALAPPDATA`로 격리): TSERP 팔레트 값 일치 확인, `model`/`added_at` 필드 존재 확인, 검색 범위 제한 확인(품번 검색 히트, 금액에 `444`가 있는 무관 카드/Material에 `444`가 있는 무관 카드는 검색 안 됨, 기종으로도 검색됨), `added_at` 내림차순 정렬 확인, NEW 배지 조건(`save_pending`) 확인, 신규 체크박스가 정확히 26x26px 고정 크기로 렌더링됨을 확인, `bind_card_click()`이 `is_control` 위젯을 건너뛰어 예외 없이 통과함을 확인, 세션 JSON에 `model`/`added_at`이 포함되어 저장됨을 확인.
+- 실제 화면 캡처(`PIL.ImageGrab`)로 메인 카드 목록과 팝업창을 직접 확인했다. TSERP 팔레트가 카드/팝업 전체에 적용됨, `added_at` 기준 최신 카드가 최상단(선택된 카드 → 이후 카드 순)에 옴, `save_pending`인 카드에만 NEW 배지가 붙고 아닌 카드는 안 붙음, 선택된 카드는 파란 채움 체크박스로 표시됨, 카드에 `기종` 항목이 표시됨, 팝업 `기본 정보`에 `기종` 입력칸이 정상 렌더링됨을 육안으로 확인했다.
+- `python -m PyInstaller Machine_Estimate.spec --noconfirm` 재빌드 성공 → `exe_release\Estimate.exe` 교체.
+- `ISCC.exe installer\Setup.iss` 컴파일 성공 → `installer\Output\MachineEstimate_Setup_v0.0.4.exe` 생성.
+- 테스트 중 실사용자 `%LOCALAPPDATA%\MachineEstimate\session_state.json`에 33건짜리 실제 세션 데이터가 이미 저장되어 있는 것을 발견했다(사용자가 별도로 실제 앱을 실행해 사용한 것으로 보임). 내용을 열람하지 않고 항목 개수만 확인했으며, 수정·삭제하지 않고 그대로 두었다.
+
+### 미실행 항목
+
+- 실제 설치(관리자 권한 필요)로 v0.0.4 설치 파일을 실행해 GUI가 실제 기동되는지는 확인하지 못했다(소스 기준 스모크 테스트와 스크린샷 캡처로만 검증).
+- 업그레이드 직후 `added_at`이 없던 기존 카드들의 정렬 순서(임의/동률)를 실제 다건 데이터로 눈으로 확인하지는 않았다.

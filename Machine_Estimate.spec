@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Machine_Estimate',
+    name='Estimate',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
