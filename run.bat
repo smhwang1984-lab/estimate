@@ -1,4 +1,5 @@
 @echo off
+REM 소스 그대로 실행(개발용). 설치본은 Estimate.exe를 쓴다.
 setlocal
 cd /d "%~dp0"
 
@@ -18,9 +19,9 @@ if errorlevel 1 (
 
 where pythonw >nul 2>nul
 if errorlevel 1 (
-    python machine_estimate_app.py
+    python main.py
 ) else (
-    start "" pythonw machine_estimate_app.py
+    start "" pythonw main.py
 )
 
 endlocal

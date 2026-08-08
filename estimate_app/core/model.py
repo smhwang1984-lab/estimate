@@ -1,0 +1,100 @@
+"""견적 카드 한 건의 자료 구조와, 그 위에서 도는 값 변환·검색 규칙."""
+
+import re
+from datetime import datetime
+
+from .config import MACHINE_KEYS
+
+TEXT_KEYS = ["part_no", "part_name", "comment", "material", "size"]
+# 검색 대상은 품번/품명/기종 3종류로만 한정한다(Material/Size/Comment/금액 등은 제외).
+SEARCH_KEYS = ["part_no", "part_name", "model"]
+
+
+def create_blank_item(no):
+    now = datetime.now()
+    item = {
+        "no": no,
+        "excel_row": None,
+        "excel_file": None,
+        "created_at": now.strftime("%Y-%m-%d"),
+        "added_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "source_file": "",
+        "source_month": "",
+        "save_pending": True,
+        "part_no": "",
+        "part_name": "",
+        "model": "",
+        "comment": "",
+        "possible": "가능",
+        "qty": 1,
+        "material": "",
+        "size": "",
+    }
+    for key in MACHINE_KEYS:
+        item[key] = 0.0
+    return item
+
+
+def get_next_no(items):
+    return max([item["no"] for item in items], default=0) + 1
+
+
+def safe_float(value):
+    if value in (None, ""):
+        return 0.0
+    if isinstance(value, str) and value.strip().startswith("="):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def safe_int(value, default=1):
+    if value in (None, ""):
+        return default
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_number(text):
+    """화면 입력칸의 문자열을 숫자로 바꾼다. 숫자가 아니면 None."""
+    text = str(text).strip().replace(",", "")
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def has_item_data(item):
+    has_text = any(str(item.get(key, "")).strip() for key in TEXT_KEYS)
+    has_time = any(float(item.get(key, 0) or 0) > 0 for key in MACHINE_KEYS)
+    return has_text or has_time
+
+
+def item_matches_search(item, query):
+    """부분 일치 검색. 'A34444'를 '444'로도 찾을 수 있고, 공백/쉼표로 여러 조건을 준다."""
+    if not query:
+        return True
+    terms = [term.lower() for term in re.split(r"[\s,]+", query.strip()) if term]
+    haystack = " ".join(str(item.get(key, "")).lower() for key in SEARCH_KEYS)
+    return all(term in haystack for term in terms)
+
+
+def filter_items(items, query):
+    """(전체 유효 카드, 검색에 걸린 카드) 두 벌을 돌려준다. 최근 등록분이 위로 온다."""
+    all_items = [item for item in items if has_item_data(item)]
+    all_items.sort(key=lambda item: item.get("added_at", ""), reverse=True)
+    visible_items = [item for item in all_items if item_matches_search(item, query)]
+    return all_items, visible_items
+
+
+def parse_version(text):
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", str(text))
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
