@@ -240,8 +240,13 @@ class EstimateApp:
         return self.search_var.get().strip() if hasattr(self, "search_var") else ""
 
     def get_display_no(self, no):
-        """현황판에 보이는 순번. 목록에 없으면(검색에 걸러졌으면) 내부 번호를 그대로 쓴다."""
-        return self.display_nos.get(no, no)
+        """현황판에 보이는 순번. 아직 목록에 없으면 None.
+
+        갓 만든 빈 카드는 내용이 없어 목록에 잡히지 않고(`has_item_data`), 검색으로 걸러진
+        카드도 마찬가지다. 그때 내부 번호를 대신 보여 주면 화면에는 1~40이 떠 있는데
+        입력창 제목만 'NO. 41'로 뜨는 어긋남이 생긴다. 번호가 없다는 사실을 그대로 알린다.
+        """
+        return self.display_nos.get(no)
 
     def schedule_refresh(self):
         # 타자를 칠 때마다 목록을 다시 그리지 않도록 잠깐 모았다가 한 번만 갱신한다.
@@ -440,9 +445,16 @@ class EstimateApp:
         open_item_popup(self, no)
 
     def open_next_item(self, no):
+        """'저장 후 다음 항목 입력' — 언제나 새 빈 카드를 연다.
+
+        예전에는 `no + 1`번 카드가 이미 있으면 그 카드를 열었다. 연속 입력 중에 남의 카드가
+        열려 덮어쓰게 되는 동작인데, v0.0.9에서 현황판에 순번이 보이게 되면서 눈에 띄게 됐다.
+        비어 있는 번호를 새로 발급해 항상 새 카드로 이어 간다.
+        """
         next_no = no + 1
-        if not any(row["no"] == next_no for row in self.data):
-            self.data.append(create_blank_item(next_no))
+        if any(row["no"] == next_no for row in self.data):
+            next_no = get_next_no(self.data)
+        self.data.append(create_blank_item(next_no))
         self.refresh_table(True)
         self.open_popup(next_no)
 

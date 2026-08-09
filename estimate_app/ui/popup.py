@@ -25,6 +25,12 @@ COMMENT_MIN_LINES = 2
 COMMENT_MAX_LINES = 20
 
 
+def display_no_text(app, no):
+    """현황판에 보이는 순번을 글자로. 아직 목록에 없는 새 카드는 '신규'로 보여 준다."""
+    display_no = app.get_display_no(no)
+    return str(display_no) if display_no else "신규"
+
+
 def build_info_panel(app, parent, item):
     """팝업 상단에 항목 정보를 펼쳐 놓는다. 금액 3종은 입력에 따라 실시간으로 바뀐다."""
     info_box = ttk.LabelFrame(parent, text="항목 정보", padding=10)
@@ -36,7 +42,7 @@ def build_info_panel(app, parent, item):
         "final_price": tk.StringVar(value=f"{final_price:,} 원"),
     }
     static_facts = [
-        ("NO", str(app.get_display_no(item["no"]))),
+        ("NO", display_no_text(app, item["no"])),
         ("작성일", item["created_at"]),
         ("저장 상태", "저장 대기" if item.get("save_pending") else "저장 완료"),
     ]
@@ -251,7 +257,7 @@ def open_item_popup(app, no):
 
     popup = tk.Toplevel(app.root)
     app.open_popups[no] = popup
-    popup.title(f"[NO. {app.get_display_no(no)}] 견적 항목 입력")
+    popup.title(f"[NO. {display_no_text(app, no)}] 견적 항목 입력")
     # 화면 배율이 커도 팝업이 화면 밖으로 넘치지 않도록 표시 영역에 맞춰 크기를 정한다.
     # v0.0.9: Material·열처리·여러 줄 Comment가 들어오면서 세로가 길어져, 예전 상한(1180x860)
     # 으로는 하단 저장 버튼과 오른쪽 단가·금액 칸이 잘렸다. 화면이 허락하는 만큼 키운다.
