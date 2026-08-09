@@ -18,6 +18,14 @@
                       (요청 4). 설정창에서 추가·수정·삭제한다.
     col_widths        v0.1.0 신설. 현황판 표의 열 폭(요청 3-3). 사용자가 헤더 구분선을
                       끌어 조절한 값을 기억해 다음에 켤 때도 그대로 연다.
+    lathe_machine     v0.1.1 신설. 가공조건 산출기(Lathe) 장비 스펙 — 정격 동력·최고
+                      회전수·이름. 04.hta의 PUMA 2600Y(22kW/3500RPM)가 기본값이다.
+    mill_machine      v0.1.1 신설. 가공조건 산출기(Mill) 장비 스펙. 01.hta에는 계산식이
+                      없어 참고할 값이 없다 — 잠정 기본값(15kW/12000RPM)이다.
+    lathe_materials   v0.1.1 신설. Lathe 재질별 kc·권장 절삭조건·추천 인서트 9행.
+                      04.hta의 값을 그대로 옮겼다.
+    mill_materials    v0.1.1 신설. Mill 재질별 kc·권장 절삭조건 9행. 참고할 원본이 없어
+                      잠정치를 넣었다(plan.md 2026-08-09 v0.1.1 "확인이 필요한 것" 참고).
 
 client / supplier 값은 라벨을 뺀 알맹이만 담는다. 예를 들어 `client.dept`에 `구매팀`만
 넣어 두면 저장할 때 코드가 `  부   서 : 구매팀` 형태로 조립한다 — 사용자가 매번
@@ -101,6 +109,86 @@ DEFAULT_MATERIALS = [
     "PEEK",
 ]
 
+# v0.1.1: 가공조건 산출기(Mill/Lathe) 기본값. `core/machining.py`가 계산만 하고,
+# 어떤 장비·재질을 쓰는지는 여기(설정)가 정한다 -- v0.1.0의 densities와 같은 자리다.
+
+# Lathe 장비 스펙. 04.hta에 적힌 PUMA 2600Y(DN솔루션) 그대로다.
+DEFAULT_LATHE_MACHINE = {"name": "PUMA 2600Y", "power": 22.0, "max_rpm": 3500.0}
+# Mill 장비 스펙. 01.hta에는 계산식 자체가 없어 참고할 장비 정보도 없다 -- 잠정값이다.
+DEFAULT_MILL_MACHINE = {"name": "", "power": 15.0, "max_rpm": 12000.0}
+
+# Lathe 재질표. kc(비절삭저항)·권장 절삭조건(v/f/ap/max_rpm)·추천 인서트(대구텍
+# CNMG120408)까지 04.hta의 9개 <option>과 recommendations/insertGrades를 그대로 옮겼다.
+# `keywords`는 04.hta에는 없던 값이다 -- 카드의 Material 문자열(예: "KS D 3752, SM45C")과
+# 매칭하기 위해 새로 붙였다. densities처럼 화학 기호 위주로 짧게 잡았다(resolve_machining_material
+# 참고). 못 찾으면 사용자가 직접 고른다 -- 추측해서 고르지 않는다.
+DEFAULT_LATHE_MATERIALS = [
+    {"name": "알루미늄 (Al)", "keywords": ["AL6061", "AL7075", "AL2024", "알루미늄"],
+     "kc": 700, "v": 350, "f": 0.30, "ap": 3.0, "max_rpm": 3500,
+     "insert_grade": "TH10", "insert_coat": "비코팅 초경 (Uncoated Carbide)",
+     "insert_iso": "ISO N · K10", "insert_desc": "비철금속 전용 · 알루미늄 고속 가공 최적"},
+    {"name": "주철 (FC/FCD)", "keywords": ["FC200", "FCD450", "주철"],
+     "kc": 1350, "v": 200, "f": 0.28, "ap": 2.8, "max_rpm": 2500,
+     "insert_grade": "TT7015", "insert_coat": "CVD 다층 코팅",
+     "insert_iso": "ISO K · K10~K25", "insert_desc": "주철 FC/FCD 전용 · 내마모성 우수"},
+    {"name": "탄소강/구조용강 (S45C)", "keywords": ["SM45C", "S45C", "SS275"],
+     "kc": 1800, "v": 220, "f": 0.28, "ap": 2.8, "max_rpm": 2500,
+     "insert_grade": "TT8125", "insert_coat": "CVD TiCN/Al₂O₃/TiN",
+     "insert_iso": "ISO P · P15~P30", "insert_desc": "탄소강/구조용강 황삭~중삭 범용"},
+    {"name": "티타늄 (Ti6Al4V)", "keywords": ["TI-6AL-4V", "TI6AL4V", "티타늄"],
+     "kc": 1950, "v": 70, "f": 0.22, "ap": 1.8, "max_rpm": 1200,
+     "insert_grade": "TT9030", "insert_coat": "PVD TiAlN 코팅",
+     "insert_iso": "ISO S · S05~S20", "insert_desc": "Ti6Al4V 티타늄 전용 · 내용착성 최우선"},
+    {"name": "합금강/금형강 (SCM)", "keywords": ["SCM440", "SCM415", "STD61"],
+     "kc": 2200, "v": 170, "f": 0.25, "ap": 2.3, "max_rpm": 2000,
+     "insert_grade": "TT5100", "insert_coat": "CVD TiCN/Al₂O₃",
+     "insert_iso": "ISO P · P20~P35", "insert_desc": "합금강/금형강 황삭 전용 · 고인성"},
+    {"name": "스테인리스강 (SUS304)", "keywords": ["STS304", "SUS304", "STS630"],
+     "kc": 2400, "v": 130, "f": 0.23, "ap": 1.6, "max_rpm": 1500,
+     "insert_grade": "TT9215", "insert_coat": "PVD TiAlN 코팅",
+     "insert_iso": "ISO M · M05~M20", "insert_desc": "SUS304 스테인리스 중삭~정삭"},
+    {"name": "열처리강 (HRC 40~)", "keywords": ["HRC", "열처리강"],
+     "kc": 2750, "v": 60, "f": 0.18, "ap": 1.4, "max_rpm": 1000,
+     "insert_grade": "TT8125", "insert_coat": "CVD TiCN/Al₂O₃/TiN",
+     "insert_iso": "ISO P/H · P15~P30", "insert_desc": "열처리강 HRC40~ · 초경 카바이드 한계 범위"},
+    {"name": "인코넬 / 내열합금", "keywords": ["INCONEL", "인코넬"],
+     "kc": 3100, "v": 35, "f": 0.12, "ap": 1.2, "max_rpm": 500,
+     "insert_grade": "TT7005", "insert_coat": "PVD TiAlN 코팅",
+     "insert_iso": "ISO S · S05~S20", "insert_desc": "인코넬/초내열합금 난삭재 전용"},
+    {"name": "청동 (Bronze)", "keywords": ["BRONZE", "청동", "BC6"],
+     "kc": 780, "v": 200, "f": 0.25, "ap": 3.0, "max_rpm": 3000,
+     "insert_grade": "TH10", "insert_coat": "비코팅 초경 (Uncoated Carbide)",
+     "insert_iso": "ISO N · K10", "insert_desc": "청동/비철 전용 · 비코팅 K계열 최적"},
+]
+
+# Mill 재질표. 참고할 원본(01.hta)에 계산식이 없어 실측치가 아니다 -- 초경 엔드밀
+# Ø10 4날 기준으로 잡은 잠정값이며, 화면에도 잠정치라고 적는다(plan.md 2026-08-09
+# v0.1.1 "확인이 필요한 것" 1번). kc는 Lathe 표와 같은 값(재질의 비절삭저항은 가공
+# 방식과 무관하다)을 쓰고, keywords도 Lathe 표와 같은 값을 쓴다.
+DEFAULT_MILL_MATERIALS = [
+    {"name": "알루미늄 (Al)", "keywords": ["AL6061", "AL7075", "AL2024", "알루미늄"],
+     "kc": 700, "vc": 300, "fz": 0.10, "ap": 5.0, "ae": 5.0},
+    {"name": "주철 (FC/FCD)", "keywords": ["FC200", "FCD450", "주철"],
+     "kc": 1350, "vc": 150, "fz": 0.10, "ap": 3.0, "ae": 5.0},
+    {"name": "탄소강/구조용강 (S45C)", "keywords": ["SM45C", "S45C", "SS275"],
+     "kc": 1800, "vc": 120, "fz": 0.08, "ap": 2.0, "ae": 5.0},
+    {"name": "티타늄 (Ti6Al4V)", "keywords": ["TI-6AL-4V", "TI6AL4V", "티타늄"],
+     "kc": 1950, "vc": 50, "fz": 0.05, "ap": 1.0, "ae": 3.0},
+    {"name": "합금강/금형강 (SCM)", "keywords": ["SCM440", "SCM415", "STD61"],
+     "kc": 2200, "vc": 100, "fz": 0.07, "ap": 2.0, "ae": 4.0},
+    {"name": "스테인리스강 (SUS304)", "keywords": ["STS304", "SUS304", "STS630"],
+     "kc": 2400, "vc": 80, "fz": 0.06, "ap": 1.5, "ae": 4.0},
+    {"name": "열처리강 (HRC 40~)", "keywords": ["HRC", "열처리강"],
+     "kc": 2750, "vc": 45, "fz": 0.04, "ap": 1.0, "ae": 2.0},
+    {"name": "인코넬 / 내열합금", "keywords": ["INCONEL", "인코넬"],
+     "kc": 3100, "vc": 25, "fz": 0.03, "ap": 0.8, "ae": 2.0},
+    {"name": "청동 (Bronze)", "keywords": ["BRONZE", "청동", "BC6"],
+     "kc": 780, "vc": 180, "fz": 0.08, "ap": 3.0, "ae": 5.0},
+]
+
+LATHE_MATERIAL_NUMERIC_FIELDS = ["kc", "v", "f", "ap", "max_rpm"]
+MILL_MATERIAL_NUMERIC_FIELDS = ["kc", "vc", "fz", "ap", "ae"]
+
 
 def get_settings_path():
     return paths.get_user_file(SETTINGS_FILE)
@@ -143,6 +231,81 @@ def _clean_densities(values):
         if name and density > 0:
             cleaned.append({"name": name, "density": density})
     return cleaned
+
+
+def _clean_machine(value, defaults):
+    """가공조건 산출기 장비 스펙(정격 동력·최고 회전수·이름)을 정리한다(v0.1.1)."""
+    merged = dict(defaults)
+    if isinstance(value, dict):
+        name = str(value.get("name", "")).strip()
+        if name:
+            merged["name"] = name
+        for key in ("power", "max_rpm"):
+            try:
+                number = float(value.get(key))
+                if number > 0:
+                    merged[key] = number
+            except (TypeError, ValueError):
+                pass
+    return merged
+
+
+def _clean_material_rows(values, defaults, numeric_fields):
+    """가공조건 재질표(Lathe/Mill 공용) 행을 정리한다(v0.1.1).
+
+    이름·필수 숫자 항목이 없으면 그 행을 통째로 버린다. densities와 같은 규칙으로,
+    사용자가 행을 다 지워 빈 목록으로 저장했으면 그대로 존중한다(기본값으로 되돌리지
+    않는다) -- 저장된 값이 아예 없을 때(키 자체가 없는 옛 settings.json)만 기본값을 쓴다.
+    """
+    if not isinstance(values, list):
+        return [dict(row) for row in defaults]
+    cleaned = []
+    for entry in values:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            continue
+        row = {"name": name}
+        ok = True
+        for field in numeric_fields:
+            try:
+                row[field] = float(entry.get(field))
+            except (TypeError, ValueError):
+                ok = False
+                break
+        if not ok:
+            continue
+        keywords = entry.get("keywords", [])
+        row["keywords"] = [str(k).strip() for k in keywords if str(k).strip()] \
+            if isinstance(keywords, list) else []
+        for extra in ("insert_grade", "insert_coat", "insert_iso", "insert_desc"):
+            if extra in entry:
+                row[extra] = str(entry.get(extra, "")).strip()
+        cleaned.append(row)
+    return cleaned
+
+
+def resolve_machining_material(material_text, materials):
+    """소재 문자열에 맞는 가공조건 재질 행을 찾는다(v0.1.1). 없으면 None -- 추측해서
+    고르지 않는다.
+
+    densities(resolve_density)는 이름 자체를 키워드로 쓰지만, 여기 name은
+    "탄소강/구조용강 (S45C)"처럼 사람이 읽는 설명이라 그대로는 카드의 Material
+    문자열(예: "KS D 3752, SM45C")과 거의 안 겹친다. 그래서 별도 keywords(화학
+    기호 등)로 찾는다. 가장 긴 키워드가 이긴다(density의 "더 구체적인 쪽이 이긴다"
+    규칙과 같다).
+    """
+    text = str(material_text or "").strip().upper()
+    if not text:
+        return None
+    best, best_len = None, 0
+    for row in materials:
+        for keyword in row.get("keywords", []):
+            keyword = str(keyword).strip().upper()
+            if keyword and keyword in text and len(keyword) > best_len:
+                best, best_len = row, len(keyword)
+    return best
 
 
 def resolve_density(material_text, densities):
@@ -196,6 +359,14 @@ def load():
         "client": _merged(DEFAULT_CLIENT, payload.get("client")),
         "supplier": _merged(DEFAULT_SUPPLIER, payload.get("supplier")),
         "col_widths": dict(col_widths) if isinstance(col_widths, dict) else {},
+        "lathe_machine": _clean_machine(payload.get("lathe_machine"), DEFAULT_LATHE_MACHINE),
+        "mill_machine": _clean_machine(payload.get("mill_machine"), DEFAULT_MILL_MACHINE),
+        "lathe_materials": _clean_material_rows(
+            payload.get("lathe_materials", DEFAULT_LATHE_MATERIALS),
+            DEFAULT_LATHE_MATERIALS, LATHE_MATERIAL_NUMERIC_FIELDS),
+        "mill_materials": _clean_material_rows(
+            payload.get("mill_materials", DEFAULT_MILL_MATERIALS),
+            DEFAULT_MILL_MATERIALS, MILL_MATERIAL_NUMERIC_FIELDS),
     }
 
 
@@ -210,6 +381,12 @@ def save(data):
         "client": _merged(DEFAULT_CLIENT, data.get("client")),
         "supplier": _merged(DEFAULT_SUPPLIER, data.get("supplier")),
         "col_widths": dict(col_widths) if isinstance(col_widths, dict) else {},
+        "lathe_machine": _clean_machine(data.get("lathe_machine"), DEFAULT_LATHE_MACHINE),
+        "mill_machine": _clean_machine(data.get("mill_machine"), DEFAULT_MILL_MACHINE),
+        "lathe_materials": _clean_material_rows(
+            data.get("lathe_materials"), DEFAULT_LATHE_MATERIALS, LATHE_MATERIAL_NUMERIC_FIELDS),
+        "mill_materials": _clean_material_rows(
+            data.get("mill_materials"), DEFAULT_MILL_MATERIALS, MILL_MATERIAL_NUMERIC_FIELDS),
     }
     path = get_settings_path()
     try:

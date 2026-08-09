@@ -1,6 +1,29 @@
 """여러 화면에서 같이 쓰는 작은 위젯."""
 
+import re
 import tkinter as tk
+from tkinter import ttk
+
+
+def numeric_entry(parent, textvariable, width, allow_decimal=True):
+    """숫자(허용하면 소수점 하나까지)만 들어가는 입력칸(v0.1.0 요청 2).
+
+    Tk의 validate='key'는 글자가 입력칸에 반영되기 전에 불려서, 통과 못 하는 글자는
+    아예 찍히지 않는다. 지우는 중간 상태(빈 문자열)는 항상 허용해야 커서로 전체를
+    지울 수 있다.
+
+    카드 팝업과 가공조건 산출기(v0.1.1)가 같이 쓴다 -- 원래 popup.py 안에만 있던 것을
+    여기로 옮겼다.
+    """
+    entry = ttk.Entry(parent, textvariable=textvariable, width=width)
+    pattern = re.compile(r"^\d*\.?\d*$" if allow_decimal else r"^\d*$")
+
+    def validate(proposed):
+        return proposed == "" or pattern.match(proposed) is not None
+
+    vcmd = (entry.register(validate), "%P")
+    entry.configure(validate="key", validatecommand=vcmd)
+    return entry
 
 
 def make_checkbox(parent, theme, on_click):

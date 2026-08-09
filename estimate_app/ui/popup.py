@@ -16,13 +16,14 @@ v0.1.0 변경점
 """
 
 import math
-import re
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 from ..core import config, settings as settings_store
-from ..core.model import calc_weight_kg, parse_number
+from ..core.model import calc_weight_kg, parse_number, parse_size
 from ..core.pricing import calc_row
+from .condition_dialog import open_condition_dialog
+from .widgets import numeric_entry as _numeric_entry
 
 SHAPE_BLOCK = "블록"
 SHAPE_ROD = "로드"
@@ -30,24 +31,6 @@ SHAPE_CUSTOM = "직접입력"
 
 COMMENT_MIN_LINES = 2
 COMMENT_MAX_LINES = 20
-
-
-def _numeric_entry(parent, textvariable, width, allow_decimal=True):
-    """숫자(허용하면 소수점 하나까지)만 들어가는 입력칸(요청 2).
-
-    Tk의 validate='key'는 글자가 입력칸에 반영되기 전에 불려서, 통과 못 하는 글자는
-    아예 찍히지 않는다. 지우는 중간 상태(빈 문자열)는 항상 허용해야 커서로 전체를
-    지울 수 있다.
-    """
-    entry = ttk.Entry(parent, textvariable=textvariable, width=width)
-    pattern = re.compile(r"^\d*\.?\d*$" if allow_decimal else r"^\d*$")
-
-    def validate(proposed):
-        return proposed == "" or pattern.match(proposed) is not None
-
-    vcmd = (entry.register(validate), "%P")
-    entry.configure(validate="key", validatecommand=vcmd)
-    return entry
 
 
 def display_no_text(app, no):
@@ -188,24 +171,26 @@ def _build_size_section(app, parent, item, material_var):
     final_size_var = tk.StringVar(value=item["size"])
     weight_var = tk.StringVar(value="")
 
-    # 이미 입력돼 있던 Size 문자열을 보고 어느 형상으로 적었는지 되짚어 칸을 채워 준다.
-    current_size = item["size"].strip()
-    if "Ø" in current_size or "D*" in current_size:
-        shape_var.set(SHAPE_ROD)
-        matches = re.findall(r"[\d\.]+", current_size)
-        if len(matches) >= 2:
-            d_var.set(matches[0])
-            l_var.set(matches[1])
-    elif "T" in current_size or "W" in current_size or "*" in current_size:
-        shape_var.set(SHAPE_BLOCK)
-        matches = re.findall(r"[\d\.]+", current_size)
-        if len(matches) >= 3:
-            t_var.set(matches[0])
-            w_var.set(matches[1])
-            l_var.set(matches[2])
-    elif current_size:
-        shape_var.set(SHAPE_CUSTOM)
-        custom_size_var.set(current_size)
+    # 이미 입력돼 있던 Size 문자열을 보고 어느 형상으로 적었는지 되짚어 칸을 채워 준다
+    # (core/model.parse_size() -- 가공조건 산출기와 이 파서를 공유한다, v0.1.1).
+    parsed_shape, parsed_dims = parse_size(item["size"])
+    shape_labels = {"block": SHAPE_BLOCK, "rod": SHAPE_ROD, "custom": SHAPE_CUSTOM}
+    if parsed_shape in shape_labels:
+        shape_var.set(shape_labels[parsed_shape])
+    if parsed_shape == "rod":
+        if "d" in parsed_dims:
+            d_var.set(parsed_dims["d"])
+        if "l" in parsed_dims:
+            l_var.set(parsed_dims["l"])
+    elif parsed_shape == "block":
+        if "t" in parsed_dims:
+            t_var.set(parsed_dims["t"])
+        if "w" in parsed_dims:
+            w_var.set(parsed_dims["w"])
+        if "l" in parsed_dims:
+            l_var.set(parsed_dims["l"])
+    elif parsed_shape == "custom":
+        custom_size_var.set(parsed_dims.get("text", ""))
 
     radio_frame = ttk.Frame(size_box)
     radio_frame.pack(fill=tk.X, pady=(0, 6))
@@ -311,6 +296,17 @@ def _build_size_section(app, parent, item, material_var):
     for variable in (t_var, w_var, l_var, d_var, material_var, shape_var):
         variable.trace_add("write", update_weight_preview)
     update_weight_preview()
+
+    # v0.1.1: 이 카드의 Material·Size를 가공조건 산출기로 보낸다(카드는 고치지 않는다,
+    # 사용자 결정 -- plan.md 2026-08-09 v0.1.1 항목). 팝업이 이미 grab_set() 중이므로
+    # 산출기가 grab을 넘겨받았다가 닫을 때 돌려준다(condition_dialog._rehome_grab).
+    action_row = ttk.Frame(size_box)
+    action_row.pack(fill=tk.X, pady=(8, 0))
+    ttk.Button(action_row, text="가공조건 산출기 열기",
+              command=lambda: open_condition_dialog(
+                  app, item=item, popup=parent.winfo_toplevel())).pack(side=tk.LEFT)
+    ttk.Label(action_row, text="현재 저장된 Material·Size를 계산기로 보냅니다. 계산 결과는 카드에 반영되지 않습니다.",
+              style="Muted.TLabel", wraplength=340, justify="left").pack(side=tk.LEFT, padx=(10, 0))
 
     return final_size_var, get_weight
 

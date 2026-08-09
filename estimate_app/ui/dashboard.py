@@ -10,6 +10,7 @@ from .. import APP_TITLE, APP_VERSION
 from ..core import excel_io, paths, session, settings as settings_store, updater
 from ..core.model import create_blank_item, filter_items, get_next_no, has_item_data
 from ..core.pricing import calc_total_amount
+from .condition_dialog import open_condition_dialog
 from .popup import open_item_popup
 from .settings_dialog import open_settings_dialog
 from .table import (COLUMNS, build_header, build_header_underline, create_row_slot,
@@ -57,6 +58,9 @@ class EstimateApp:
         self.empty_frame = None
         self.open_popups = {}
         self.settings_window = None
+        # v0.1.1: 가공조건 산출기(Mill/Lathe). 카드 데이터를 읽기만 하고 고치지 않으므로
+        # 세션·저장 경로와는 무관하다.
+        self.condition_window = None
 
         self.theme.apply(self.root)
         self.maximize_window()
@@ -161,6 +165,7 @@ class EstimateApp:
         ttk.Button(extra_actions, text="전체 선택", command=self.select_visible_items).pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="선택 해제", command=self.clear_selection).pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="선택 다운로드", command=self.export_selected_items).pack(side=tk.LEFT, padx=4)
+        ttk.Button(extra_actions, text="가공조건 산출기", command=self.open_condition_dialog).pack(side=tk.LEFT, padx=4)
 
         # 현황판 영역. 스크롤바를 먼저 오른쪽에 붙이고, 남은 폭 안에
         # [구역 제목 / 고정 헤더 / 스크롤되는 본문]을 쌓아야 헤더와 본문의 열이 어긋나지 않는다.
@@ -216,6 +221,21 @@ class EstimateApp:
 
     def open_settings(self):
         open_settings_dialog(self)
+
+    def open_condition_dialog(self):
+        """가공조건 산출기(v0.1.1). 현황판에서 1건 골라 두면 그 카드의 Material·Size를
+        읽어 미리 채운다(카드는 고치지 않는다). 2건 이상 골랐으면 어느 카드인지 정할 수
+        없어 열지 않는다."""
+        if len(self.selected_nos) > 1:
+            messagebox.showinfo("여러 건 선택됨",
+                                "가공조건 산출기는 카드 1건만 반영할 수 있습니다.\n"
+                                "한 건만 선택하거나 선택을 해제한 뒤 다시 눌러 주세요.")
+            return
+        item = None
+        if self.selected_nos:
+            no = next(iter(self.selected_nos))
+            item = next((row for row in self.data if row["no"] == no), None)
+        open_condition_dialog(self, item=item, popup=None)
 
     def apply_settings(self, new_settings):
         """설정창에서 저장한 값을 화면 전체에 반영한다(요청 6-1)."""

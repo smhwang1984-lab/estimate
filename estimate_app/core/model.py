@@ -86,6 +86,34 @@ def calc_weight_kg(shape, t=None, w=None, l=None, d=None, density=None):
     return volume_mm3 * density / 1_000_000
 
 
+def parse_size(size_text):
+    """Size 문자열을 형상과 치수로 되짚는다(v0.1.1).
+
+    카드 팝업(`ui/popup.py`)의 Size 섹션과 가공조건 산출기(`ui/condition_dialog.py`)가
+    같은 것을 쓰도록 여기 하나로 모았다 -- 원래 팝업 안에 인라인으로만 있던 로직이다.
+
+    반환: (shape, dims). shape는 "block"/"rod"/"custom"/None(빈 문자열).
+    dims는 문자열 값 그대로를 담은 사전이다(숫자 변환은 호출부가 필요할 때 한다):
+        block -> {"t","w","l"} (셋 다 있어야 채운다. 하나라도 빠지면 빈 사전)
+        rod   -> {"d","l"} (둘 다 있어야 채운다)
+        custom -> {"text": 원문 그대로}
+    """
+    text = str(size_text or "").strip()
+    if not text:
+        return None, {}
+    if "Ø" in text or "D*" in text:
+        matches = re.findall(r"[\d\.]+", text)
+        if len(matches) >= 2:
+            return "rod", {"d": matches[0], "l": matches[1]}
+        return "rod", {}
+    if "T" in text or "W" in text or "*" in text:
+        matches = re.findall(r"[\d\.]+", text)
+        if len(matches) >= 3:
+            return "block", {"t": matches[0], "w": matches[1], "l": matches[2]}
+        return "block", {}
+    return "custom", {"text": text}
+
+
 def get_next_no(items):
     return max([item["no"] for item in items], default=0) + 1
 
