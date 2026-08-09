@@ -61,6 +61,12 @@ class EstimateApp:
         # v0.1.1: 가공조건 산출기(Mill/Lathe). 카드 데이터를 읽기만 하고 고치지 않으므로
         # 세션·저장 경로와는 무관하다.
         self.condition_window = None
+        # v0.1.2: 삭제 되돌리기. 메모리에만 둔다(세션 파일에는 안 남긴다) -- 프로그램을
+        # 껐다 켜면 되돌릴 수 없다. 단일 단계만 기억한다(스택 아님).
+        self.last_deleted = []
+        self.undo_button = None
+        self.row_context_menu = None
+        self.context_menu_no = None
 
         self.theme.apply(self.root)
         self.maximize_window()
@@ -71,6 +77,10 @@ class EstimateApp:
         # Toplevel이라 여기서 건 바인딩과 서로 간섭하지 않는다(포커스가 팝업에 있으면
         # 팝업의 <Escape> 바인딩만 반응한다).
         self.root.bind("<Escape>", lambda event: self.clear_selection())
+        # v0.1.2: 삭제 되돌리기. app.root에만 건다(bind_all 아님) -- 카드 팝업·설정창·
+        # 산출기 같은 다른 Toplevel에 포커스가 있을 때(텍스트 편집 중일 수 있다)는
+        # Ctrl+Z가 여기로 안 온다.
+        self.root.bind("<Control-z>", lambda event: self.undo_delete())
         # 저장된 항목이 많으면 표를 다 그리는 데 몇 초가 걸린다. 그 동안 아무것도 안 뜬 것처럼
         # 보이지 않도록 창을 먼저 띄우고, 목록은 곧바로 이어서 채운다.
         self.summary_var.set("목록을 불러오는 중입니다...")
@@ -166,6 +176,13 @@ class EstimateApp:
         ttk.Button(extra_actions, text="선택 해제", command=self.clear_selection).pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="선택 다운로드", command=self.export_selected_items).pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="가공조건 산출기", command=self.open_condition_dialog).pack(side=tk.LEFT, padx=4)
+        # v0.1.2: 되돌릴 수 없는 동작이라 "선택 다운로드"와 바로 붙여 두지 않는다(오클릭 방지) --
+        # 앞쪽 버튼들과 간격을 더 벌린다.
+        ttk.Button(extra_actions, text="선택 삭제", command=self.delete_selected_items).pack(
+            side=tk.LEFT, padx=(16, 4))
+        self.undo_button = ttk.Button(extra_actions, text="삭제 취소", command=self.undo_delete,
+                                      state=tk.DISABLED)
+        self.undo_button.pack(side=tk.LEFT, padx=4)
 
         # 현황판 영역. 스크롤바를 먼저 오른쪽에 붙이고, 남은 폭 안에
         # [구역 제목 / 고정 헤더 / 스크롤되는 본문]을 쌓아야 헤더와 본문의 열이 어긋나지 않는다.
@@ -484,6 +501,125 @@ class EstimateApp:
         self.data.append(create_blank_item(next_no))
         self.refresh_table(True)
         self.open_popup(next_no)
+
+    # ---------- 삭제 / 되돌리기 (v0.1.2) ----------
+
+    def delete_selected_items(self):
+        if not self.selected_nos:
+            messagebox.showinfo("선택 없음", "삭제할 항목을 먼저 선택하세요.")
+            return
+        self.delete_items(self.selected_nos)
+
+    def open_row_context_menu(self, no, event):
+        """행 우클릭 메뉴. 슬롯마다 만들지 않고 앱에 하나만 만들어 재사용한다(표 슬롯이
+        재사용되는 구조라 슬롯마다 달면 메뉴가 계속 쌓인다 -- 인수인계서 함정 6/7번과
+        같은 이유). 메뉴 항목은 self.context_menu_no를 호출 시점에 읽는다.
+
+        선택 밖 행을 우클릭하면 그 행만 선택하고, 선택 안 행이면 지금 선택을 그대로
+        둔다(윈도우 탐색기 규칙, 요청 2-1). "삭제"는 그 뒤의 self.selected_nos를
+        그대로 쓰므로 별도 분기가 필요 없다 -- 여기서 이미 의도한 대상으로 정리됐다.
+        """
+        if no not in self.selected_nos:
+            self.handle_row_click(no, "plain")
+        self.context_menu_no = no
+        if self.row_context_menu is None:
+            c = self.theme.colors
+            menu = tk.Menu(self.root, tearoff=0, bg=c["card_alt"], fg=c["text"],
+                           activebackground=c["accent"], activeforeground=c["bg"],
+                           bd=0, relief="flat")
+            menu.add_command(label="입력창 열기", command=lambda: self.open_popup(self.context_menu_no))
+            menu.add_separator()
+            menu.add_command(label="삭제", command=lambda: self.delete_items(self.selected_nos))
+            self.row_context_menu = menu
+        try:
+            self.row_context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            # tk_popup 뒤에 반드시 불러야 한다 -- 안 부르면 메뉴가 grab을 쥔 채 남아
+            # 다음 클릭이 먹통이 된다(Tk의 알려진 동작).
+            self.row_context_menu.grab_release()
+
+    def delete_items(self, nos):
+        """선택 삭제·우클릭 삭제가 공통으로 부르는 실제 삭제.
+
+        대상 중 하나라도 입력창(팝업)이 열려 있으면 아무것도 지우지 않는다 -- popup.py의
+        save_and_close()가 팝업을 열 때 붙잡아 둔 item dict를 직접 고치는 구조라(502행
+        부근), 그 카드가 app.data에서 먼저 빠지면 저장을 눌러도 오류 없이 조용히
+        사라진다. 부분 삭제도 하지 않는다 -- 막힌 게 있으면 전부 취소한다.
+        """
+        nos = set(nos)
+        index_by_id = {id(row): idx for idx, row in enumerate(self.data)}
+        targets = [item for item in self.data if item["no"] in nos]
+        if not targets:
+            return
+
+        blocked = [item for item in targets if item["no"] in self.open_popups]
+        if blocked:
+            lines = "\n".join(
+                f"  NO.{self.get_display_no(item['no']) or '-'}  {item['part_no'] or '품번 미입력'}"
+                for item in blocked)
+            messagebox.showwarning(
+                "삭제할 수 없음",
+                f"다음 항목은 입력창이 열려 있어 지울 수 없습니다:\n{lines}\n\n"
+                f"입력창을 닫은 뒤 다시 시도해 주세요.")
+            return
+
+        preview = targets[:5]
+        lines = "\n".join(
+            f"  NO.{self.get_display_no(item['no']) or '-'}  "
+            f"{item['part_no'] or '품번 미입력'} / {item['part_name'] or '품명 미입력'}"
+            for item in preview)
+        if len(targets) > 5:
+            lines += f"\n  ...외 {len(targets) - 5}건"
+        if not messagebox.askyesno(
+                "삭제 확인",
+                f"선택한 {len(targets)}건을 삭제할까요?\n\n{lines}\n\n"
+                f"삭제한 항목은 '삭제 취소'로 되돌릴 수 있습니다.",
+                default="no"):
+            return
+
+        self.last_deleted = [{"item": item, "index": index_by_id[id(item)]} for item in targets]
+        target_nos = {item["no"] for item in targets}
+        self.data = [item for item in self.data if item["no"] not in target_nos]
+        self.selected_nos -= target_nos
+        if self.anchor_no in target_nos:
+            self.anchor_no = None
+        self._update_undo_button()
+        self.save_session()
+        self.refresh_table(True)
+
+    def undo_delete(self):
+        """방금 지운 카드를 되살린다(단일 단계, 세션에는 안 남기고 메모리에만 둔다).
+
+        지운 뒤 `새 항목 추가`/`저장 후 다음 항목`/`기계 시트 업로드`로 새 카드가
+        생겼으면 get_next_no()가 방금 비운 번호를 다시 내줬을 수 있다(요청 확인한
+        구조 (6)). 그 경우 되살리면 번호가 겹치므로, 되살리는 이 시점에 겹치는지
+        검사한다 -- 번호를 새로 만드는 쪽(add_row 등) 코드를 일일이 손대지 않아도
+        되고, 나중에 새 경로가 추가돼도 안전하다.
+        """
+        if not self.last_deleted:
+            return
+        current_nos = {row["no"] for row in self.data}
+        if any(entry["item"]["no"] in current_nos for entry in self.last_deleted):
+            messagebox.showerror(
+                "되돌릴 수 없음",
+                "삭제한 뒤 같은 번호의 카드가 새로 만들어져 되돌릴 수 없습니다.")
+            self.last_deleted = []
+            self._update_undo_button()
+            return
+
+        for entry in sorted(self.last_deleted, key=lambda e: e["index"]):
+            index = min(entry["index"], len(self.data))
+            self.data.insert(index, entry["item"])
+        restored_nos = {entry["item"]["no"] for entry in self.last_deleted}
+        self.last_deleted = []
+        self._update_undo_button()
+        self.save_session()
+        self.refresh_table(True)
+        self.set_selection(restored_nos)
+
+    def _update_undo_button(self):
+        if self.undo_button is not None:
+            self.undo_button.configure(state=(tk.NORMAL if self.last_deleted else tk.DISABLED))
 
     # ---------- 엑셀 ----------
 

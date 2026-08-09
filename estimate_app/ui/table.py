@@ -394,6 +394,7 @@ def _bind_row_behavior(app, slot):
         Ctrl+클릭        그 행을 선택에 더하거나 뺀다
         Shift+클릭       마지막 기준 행부터 이 행까지 범위 선택
         더블클릭         카드 열기
+        우클릭           삭제/입력창 열기 메뉴(v0.1.2)
     Tk는 더블클릭 때 <Button-1>을 먼저 한 번 발생시키므로 첫 클릭의 선택도 함께 일어난다.
     탐색기도 같은 동작이라 그대로 둔다(지연 타이머를 넣으면 클릭 반응만 굼떠진다).
     """
@@ -415,20 +416,27 @@ def _bind_row_behavior(app, slot):
             app.open_popup(slot["no"])
         return "break"
 
+    def on_right_click(event):
+        if slot["no"] is not None:
+            app.open_row_context_menu(slot["no"], event)
+        return "break"
+
     on_plain = click("plain")
     on_ctrl = click("toggle")
     on_shift = click("range")
 
     def bind_all(widget):
-        # 체크박스처럼 자체 클릭 동작이 있는 위젯(is_control)은 건드리지 않는다.
-        if getattr(widget, "is_control", False):
-            return
-        widget.bind("<Button-1>", on_plain)
-        widget.bind("<Control-Button-1>", on_ctrl)
-        widget.bind("<Shift-Button-1>", on_shift)
-        widget.bind("<Double-Button-1>", on_double)
-        widget.bind("<Enter>", on_enter)
-        widget.bind("<Leave>", on_leave)
+        # 체크박스처럼 자체 클릭 동작이 있는 위젯(is_control)은 왼쪽 클릭 계열만
+        # 건드리지 않는다 -- 우클릭 메뉴는 체크박스 위에서도 똑같이 떠야 한다(요청).
+        is_control = getattr(widget, "is_control", False)
+        if not is_control:
+            widget.bind("<Button-1>", on_plain)
+            widget.bind("<Control-Button-1>", on_ctrl)
+            widget.bind("<Shift-Button-1>", on_shift)
+            widget.bind("<Double-Button-1>", on_double)
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+        widget.bind("<Button-3>", on_right_click)
         for child in widget.winfo_children():
             bind_all(child)
 
