@@ -1634,6 +1634,12 @@ Vc 120, fz 0.08, ap 2.0, ae 5.0, 15kW / 12000RPM
   `densities`/`company`/`client`/`supplier` 흐름을 깨지 않는 것과, `export_items()`가
   예외 없이 도는 것을 확인했다(산출기는 카드를 안 건드리므로 이 이상의 회귀 대상은
   없다).
+- **빌드(사용자 요청으로 추가 진행)**: `python -m PyInstaller --noconfirm Machine_Estimate.spec` 성공. `dist/Estimate/Estimate.exe`를 직접 실행해 창 제목이
+  `Estimate(견적) v0.1.1`로 뜨는 것을 확인했다(그 사이 사용자가 띄워 둔 v0.1.0
+  인스턴스는 건드리지 않고 새로 띄운 것만 종료했다 -- v0.1.0 때와 같은 방식).
+  `ISCC.exe`로 경고 없이 컴파일. `MachineEstimate_Setup_v0.1.1.exe` 9,624,874바이트.
+  워크트리 삭제 시 사라지지 않도록 사용자 배포 폴더
+  (`...\orca\workspaces\Estimate\Estimate\installer\Output\`)에도 복사해 뒀다.
 
 ### 미실행 항목
 
@@ -1646,7 +1652,4 @@ Vc 120, fz 0.08, ap 2.0, ae 5.0, 15kW / 12000RPM
   열이 잘릴 수 있다(실제 캡처에서 확인, Ae(mm)·최고RPM 등). 트리뷰 자체에 가로
   스크롤바를 추가하진 않았다 — ttk.Treeview 기본 동작(마우스 드래그로 열 경계 조절)에
   맡겼다. 급하지 않은 개선 여지로 남겨 둔다.
-- **빌드는 하지 않았다.** 버전 번호만 올렸다(`estimate_app/__init__.py`,
-  `installer/Setup.iss` 둘 다 0.1.1). exe·설치 파일 생성은 요청받지 않아 진행하지
-  않았다 — 필요하면 알려 주기 바란다.
 - v0.0.9·v0.1.0과 마찬가지로 이번 v0.1.1도 `Estimate` 브랜치에 아직 병합하지 않았다.
