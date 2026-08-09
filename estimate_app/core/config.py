@@ -35,6 +35,11 @@ DEFAULT_COLORS = {
     "th_bg": "#f0f3fc", "th_fg": "#2b3550", "th_underline": "#6553f0",
     "row_bg": "#ffffff", "row_alt_bg": "#f9fbff", "row_hover": "#eef4ff",
     "row_selected_bg": "#f0eefe",
+    # v0.1.3: 품번이 겹치는 행 표시. danger_bg(#fdeaec)를 그대로 쓰면 "불가" 배지와 같은
+    # 색이라 배지가 행 배경에 묻히므로, 한 단계 노란기를 섞은 별도 색을 둔다.
+    # 줄무늬(짝수/홀수)를 잃지 않도록 alt도 따로 둔다 — 두 값 모두 흰 글자가 아니라
+    # text(#1c2436) 기준 대비 4.5:1 이상이다.
+    "row_dup_bg": "#fdeee4", "row_dup_alt_bg": "#fbe6d8", "row_dup_fg": "#a4400f",
 }
 
 DEFAULT_FONTS = {

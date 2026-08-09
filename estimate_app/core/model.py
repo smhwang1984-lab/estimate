@@ -177,6 +177,30 @@ def filter_items(items, query):
     return all_items, visible_items
 
 
+def normalize_part_no(text):
+    """품번 비교용 표기. 앞뒤 공백과 사이 공백을 없애고 대문자로 맞춘다.
+
+    엑셀에서 올라온 품번은 ` A-1024 `처럼 공백이 붙어 오는 일이 잦고, 손으로 친 것과
+    대소문자가 다를 수 있다. 사람 눈에 같은 품번이면 중복으로 보여야 하므로 여기서 맞춘다.
+    """
+    return "".join(str(text or "").split()).upper()
+
+
+def find_duplicate_part_nos(items):
+    """두 번 이상 나오는 품번의 집합(v0.1.3, 정규화된 표기).
+
+    빈 품번은 세지 않는다 — 아직 안 적은 카드끼리 중복으로 물들면 새 카드를 만들 때마다
+    화면이 붉어진다. 검색·더보기로 가려진 카드도 포함해 `data` 전체를 본다(짝이 화면 밖에
+    있어도 중복은 중복이다).
+    """
+    counts = {}
+    for item in items:
+        key = normalize_part_no(item.get("part_no"))
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return {key for key, count in counts.items() if count > 1}
+
+
 def parse_version(text):
     match = re.search(r"(\d+)\.(\d+)\.(\d+)", str(text))
     if not match:

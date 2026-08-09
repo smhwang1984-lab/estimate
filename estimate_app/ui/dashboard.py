@@ -8,7 +8,8 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from .. import APP_TITLE, APP_VERSION
 from ..core import excel_io, paths, session, settings as settings_store, updater
-from ..core.model import create_blank_item, filter_items, get_next_no, has_item_data
+from ..core.model import (create_blank_item, filter_items, find_duplicate_part_nos, get_next_no,
+                          has_item_data, normalize_part_no)
 from ..core.pricing import calc_total_amount
 from .condition_dialog import open_condition_dialog
 from .popup import open_item_popup
@@ -64,9 +65,11 @@ class EstimateApp:
         # v0.1.2: 삭제 되돌리기. 메모리에만 둔다(세션 파일에는 안 남긴다) -- 프로그램을
         # 껐다 켜면 되돌릴 수 없다. 단일 단계만 기억한다(스택 아님).
         self.last_deleted = []
-        self.undo_button = None
         self.row_context_menu = None
         self.context_menu_no = None
+        # v0.1.3: 품번이 겹치는 카드의 품번 집합(정규화 표기). refresh_table에서 다시 계산해
+        # 두고, 행 색을 칠할 때(row_normal_bg) 참조한다 -- 행마다 목록 전체를 훑지 않기 위해서다.
+        self.duplicate_part_nos = set()
 
         self.theme.apply(self.root)
         self.maximize_window()
@@ -144,7 +147,9 @@ class EstimateApp:
             18, centers[1], anchor="w", text="", fill=c["panel_muted_fg"], font=self.theme.normal)
         self.header_canvas.create_text(
             18, centers[2], anchor="w",
-            text="행을 클릭하면 선택, 더블클릭하면 항목 입력창이 열립니다. Ctrl/Shift로 여러 건을 고를 수 있습니다.",
+            # v0.1.3: "삭제 취소" 버튼을 없앤 대신 되돌리기 방법을 여기에 적어 둔다(요청 1).
+            text="행을 클릭하면 선택, 더블클릭하면 항목 입력창이 열립니다. Ctrl/Shift로 여러 건 선택, "
+                 "방금 삭제한 항목은 Ctrl+Z로 되돌립니다.",
             fill=c["panel_muted_fg"], font=self.theme.small)
 
         actions = tk.Frame(self.header_canvas, bg=c["panel_2"])
@@ -178,11 +183,10 @@ class EstimateApp:
         ttk.Button(extra_actions, text="가공조건 산출기", command=self.open_condition_dialog).pack(side=tk.LEFT, padx=4)
         # v0.1.2: 되돌릴 수 없는 동작이라 "선택 다운로드"와 바로 붙여 두지 않는다(오클릭 방지) --
         # 앞쪽 버튼들과 간격을 더 벌린다.
+        # v0.1.3: "삭제 취소" 버튼은 없앴다(요청 1) -- 되돌리기 기능 자체는 남아 있다.
+        # Ctrl+Z와 삭제 확인창 안내 문구가 그 자리를 대신한다.
         ttk.Button(extra_actions, text="선택 삭제", command=self.delete_selected_items).pack(
             side=tk.LEFT, padx=(16, 4))
-        self.undo_button = ttk.Button(extra_actions, text="삭제 취소", command=self.undo_delete,
-                                      state=tk.DISABLED)
-        self.undo_button.pack(side=tk.LEFT, padx=4)
 
         # 현황판 영역. 스크롤바를 먼저 오른쪽에 붙이고, 남은 폭 안에
         # [구역 제목 / 고정 헤더 / 스크롤되는 본문]을 쌓아야 헤더와 본문의 열이 어긋나지 않는다.
@@ -308,17 +312,22 @@ class EstimateApp:
         today = datetime.now().strftime("%Y-%m-%d")
         search_note = f"  |  검색 결과 {len(visible_items)}건" if query else ""
         select_note = f"  |  선택 {selected_count}건"
+        # v0.1.3: 중복 품번은 행 색으로 표시하지만, 짝이 화면 밖(더보기·검색)에 있으면 눈에
+        # 안 띈다. 요약줄에 건수를 같이 적어 "어딘가에 겹친 게 있다"는 것을 알린다.
+        duplicate_count = len([item for item in all_items if self.is_duplicate_item(item)])
+        duplicate_note = f"  |  품번 중복 {duplicate_count}건" if duplicate_count else ""
         if self.session_saved_at:
             session_note = f"  |  세션 복원 {self.session_restored_count}건 (저장 {self.session_saved_at})"
         else:
             session_note = "  |  새 세션 (저장된 데이터 없음)"
         return (f"작성일 {today}  |  항목 {len(all_items)}건  |  총 견적금액 {total_amount:,}원"
-               f"{search_note}{select_note}{session_note}")
+               f"{search_note}{select_note}{duplicate_note}{session_note}")
 
     def update_summary_text(self):
         """표 위젯은 건드리지 않고 상단 요약줄(선택 건수 등)만 다시 계산한다."""
         query = self.get_search_text()
         all_items, visible_items = filter_items(self.data, query)
+        self.duplicate_part_nos = find_duplicate_part_nos(all_items)
         self.summary_var.set(self._summary_text(all_items, visible_items, query))
 
     def refresh_table(self, reset_limit=False):
@@ -335,6 +344,8 @@ class EstimateApp:
         query = self.get_search_text()
         all_items, visible_items = filter_items(self.data, query)
         self.selected_nos.intersection_update({item["no"] for item in all_items})
+        # 색을 칠하기 전에 중복 집합을 먼저 갱신한다(요청 3) -- update_row_slot이 이 값을 본다.
+        self.duplicate_part_nos = find_duplicate_part_nos(all_items)
         self.summary_var.set(self._summary_text(all_items, visible_items, query))
 
         if not all_items:
@@ -376,11 +387,23 @@ class EstimateApp:
         if reset_limit:
             self.row_canvas.yview_moveto(0)
 
+    def is_duplicate_item(self, item):
+        """이 카드의 품번이 목록 안에서 겹치는가(v0.1.3, 요청 3)."""
+        key = normalize_part_no(item.get("part_no"))
+        return bool(key) and key in self.duplicate_part_nos
+
     def row_normal_bg(self, slot):
-        """이 슬롯이 지금 보여야 할 '평상시' 배경색(선택/줄무늬 반영)."""
+        """이 슬롯이 지금 보여야 할 '평상시' 배경색(선택/중복/줄무늬 반영).
+
+        우선순위는 선택 > 품번 중복 > 줄무늬다. 선택을 중복보다 위에 두는 이유는, 지우거나
+        내려받을 대상을 고르는 중에 "지금 고른 행이 어디인지"가 더 급한 정보이기 때문이다
+        (중복 여부는 선택을 풀면 바로 다시 보인다).
+        """
         c = self.theme.colors
         if slot["no"] in self.selected_nos:
             return c["row_selected_bg"]
+        if slot.get("duplicate"):
+            return c["row_dup_bg"] if slot["parity"] == 0 else c["row_dup_alt_bg"]
         return c["row_bg"] if slot["parity"] == 0 else c["row_alt_bg"]
 
     def _hide_rows(self):
@@ -573,7 +596,7 @@ class EstimateApp:
         if not messagebox.askyesno(
                 "삭제 확인",
                 f"선택한 {len(targets)}건을 삭제할까요?\n\n{lines}\n\n"
-                f"삭제한 항목은 '삭제 취소'로 되돌릴 수 있습니다.",
+                f"방금 삭제한 항목은 현황판에서 Ctrl+Z로 되돌릴 수 있습니다.",
                 default="no"):
             return
 
@@ -583,7 +606,6 @@ class EstimateApp:
         self.selected_nos -= target_nos
         if self.anchor_no in target_nos:
             self.anchor_no = None
-        self._update_undo_button()
         self.save_session()
         self.refresh_table(True)
 
@@ -604,7 +626,6 @@ class EstimateApp:
                 "되돌릴 수 없음",
                 "삭제한 뒤 같은 번호의 카드가 새로 만들어져 되돌릴 수 없습니다.")
             self.last_deleted = []
-            self._update_undo_button()
             return
 
         for entry in sorted(self.last_deleted, key=lambda e: e["index"]):
@@ -612,44 +633,84 @@ class EstimateApp:
             self.data.insert(index, entry["item"])
         restored_nos = {entry["item"]["no"] for entry in self.last_deleted}
         self.last_deleted = []
-        self._update_undo_button()
         self.save_session()
         self.refresh_table(True)
         self.set_selection(restored_nos)
 
-    def _update_undo_button(self):
-        if self.undo_button is not None:
-            self.undo_button.configure(state=(tk.NORMAL if self.last_deleted else tk.DISABLED))
-
     # ---------- 엑셀 ----------
 
     def upload_excel_file(self):
-        file_path = filedialog.askopenfilename(
-            title="업로드할 견적 양식 선택",
+        """기계 시트를 카드로 불러온다. v0.1.3부터 여러 파일을 한 번에 고를 수 있다(요청 2).
+
+        읽기를 다 끝낸 뒤에 한꺼번에 붙인다 -- 파일마다 읽고 바로 붙이면 세 번째 파일에서
+        오류가 났을 때 앞의 두 개만 들어간 채로 멈춘다(업로드는 되돌리기 대상이 아니라
+        사용자가 직접 지워야 한다). 한 파일이 실패해도 나머지는 살리고, 무엇이 실패했는지
+        마지막에 함께 알린다.
+
+        고른 순서대로 읽어 그 순서대로 번호를 매긴다. 화면에서는 나중에 들어온 카드가 위로
+        올라오므로(`filter_items`), 마지막에 고른 파일이 목록 맨 위에 놓인다.
+        """
+        file_paths = filedialog.askopenfilenames(
+            title="업로드할 견적 양식 선택 (여러 개 선택 가능)",
             filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")])
-        if not file_path:
+        # Tk 구현에 따라 튜플이 아니라 Tcl 리스트 문자열이 오는 경우가 있어 한 번 걸러 준다.
+        if isinstance(file_paths, str):
+            file_paths = self.root.tk.splitlist(file_paths) if file_paths else ()
+        if not file_paths:
             return
-        try:
-            cards = excel_io.read_cards_from_workbook(file_path)
-        except Exception as exc:
-            messagebox.showerror("업로드 오류", f"선택한 파일을 불러오지 못했습니다.\n\n{exc}")
+
+        loaded, empty_files, failed = [], [], []
+        for file_path in file_paths:
+            name = os.path.basename(file_path)
+            try:
+                cards = excel_io.read_cards_from_workbook(file_path)
+            except Exception as exc:
+                failed.append((name, exc))
+                continue
+            if cards:
+                loaded.append((name, cards))
+            else:
+                empty_files.append(name)
+
+        total = sum(len(cards) for _, cards in loaded)
+        if not total:
+            detail = "\n".join([f"  {name}: {exc}" for name, exc in failed]
+                               + [f"  {name}: 입력된 항목 없음" for name in empty_files])
+            messagebox.showwarning("업로드 안내",
+                                   f"불러온 항목이 없습니다.\n\n{detail}")
             return
-        if not cards:
-            messagebox.showwarning("업로드 안내", "선택한 파일에서 입력된 견적 항목을 찾지 못했습니다.")
+
+        summary = "\n".join(f"  {name}  {len(cards)}건" for name, cards in loaded)
+        if failed or empty_files:
+            summary += "\n\n[불러오지 못한 파일]\n" + "\n".join(
+                [f"  {name}: {exc}" for name, exc in failed]
+                + [f"  {name}: 입력된 항목 없음" for name in empty_files])
+        # 빈 목록에 파일 하나를 무사히 읽어 온 경우는 예전처럼 묻지 않고 바로 넣는다
+        # (되돌릴 것도, 고를 것도 없는 상황이라 확인창이 걸리적거리기만 한다).
+        need_confirm = bool(self.data) or len(loaded) > 1 or failed or empty_files
+        if need_confirm and not messagebox.askyesno(
+                "업로드 확인",
+                f"파일 {len(loaded)}개에서 {total}개 항목을 찾았습니다.\n\n{summary}\n\n"
+                f"현재 카드 목록에 추가하시겠습니까?"):
             return
-        if self.data and not messagebox.askyesno(
-                "업로드 확인", f"선택한 파일에서 {len(cards)}개 항목을 찾았습니다.\n현재 카드 목록에 추가하시겠습니까?"):
-            return
+
         next_no = get_next_no(self.data)
-        for offset, item in enumerate(cards):
-            item["no"] = next_no + offset
-            item["save_pending"] = True
-            self.data.append(item)
+        for _, cards in loaded:
+            for item in cards:
+                item["no"] = next_no
+                item["save_pending"] = True
+                self.data.append(item)
+                next_no += 1
         self.save_session()
         self.refresh_table(True)
+
+        duplicate_note = ""
+        if self.duplicate_part_nos:
+            duplicate_note = ("\n\n품번이 겹치는 항목이 있어 해당 행을 색으로 표시했습니다"
+                              " (요약줄의 '품번 중복' 건수 참고).")
         messagebox.showinfo("업로드 완료",
-                            f"{len(cards)}개 항목을 카드로 불러왔습니다.\n"
-                            f"방금 올린 항목이 목록 맨 위에 쌓입니다.")
+                            f"파일 {len(loaded)}개에서 {total}개 항목을 카드로 불러왔습니다.\n"
+                            f"방금 올린 항목이 목록 맨 위에 쌓입니다.{duplicate_note}")
 
     def export_items(self, items, default_name=None, parent=None):
         """고른 항목을 엑셀 견적 파일로 내려받는다(v0.0.9: PDF 출력은 없앴다, 요청 3-1)."""

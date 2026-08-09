@@ -29,6 +29,11 @@ v0.1.0: 헤더 열 사이에 연한 세로 구분선을 두고, 끌면 좌우 �
 살아 있고 끄는 즉시 헤더와 모든 행 슬롯에 같이 반영되며, 손을 떼면 settings.json에 남는다
 (다음에 켤 때도 그대로 열린다). 한 번이라도 사용자가 끈 열은 창 크기가 바뀌어도 그 폭을
 지키도록 weight를 0으로 고정한다 — 그 전까지는 품명·Comment가 남는 폭을 나눠 갖는다.
+
+v0.1.3: 품번이 겹치는 행은 배경을 주황 계열(row_dup_bg/row_dup_alt_bg)로 물들이고 품번
+글자색도 함께 바꾼다(요청 3). 배경 우선순위는 선택 > 중복 > 줄무늬이며, 판정 자체는
+dashboard가 목록 전체를 보고 미리 만들어 둔 집합(app.duplicate_part_nos)이 쥐고 있다.
+마우스를 올린 동안(row_hover)에는 선택 행과 마찬가지로 잠깐 hover 색이 덮는다.
 """
 
 import tkinter as tk
@@ -257,7 +262,10 @@ def create_row_slot(app):
     row = tk.Frame(app.row_container, bg=c["row_bg"])
     configure_columns(row, app)
 
-    slot = {"frame": row, "no": None, "parity": 0, "new_badge": None, "tinted": []}
+    # duplicate는 여기서 먼저 False로 둔다 -- 마우스가 슬롯 위를 지나가면 <Leave> 콜백이
+    # row_normal_bg(slot)을 부르는데, 그게 update_row_slot보다 먼저 일어날 수 있다.
+    slot = {"frame": row, "no": None, "parity": 0, "duplicate": False,
+            "new_badge": None, "tinted": []}
 
     def place(widget, column, sticky="ew"):
         widget.grid(row=0, column=column, sticky=sticky, padx=pad_x, pady=pad_y)
@@ -325,6 +333,9 @@ def update_row_slot(app, slot, item, row_index):
     no = item["no"]
     slot["no"] = no
     slot["parity"] = row_index % 2
+    # v0.1.3: 품번이 겹치는 행은 배경색으로 알린다(요청 3). 판정은 app이 목록 전체를 보고
+    # 미리 해 둔 집합에서 가져온다 -- 행마다 다시 세면 카드 수의 제곱만큼 일이 늘어난다.
+    slot["duplicate"] = app.is_duplicate_item(item)
     _, _, final_price = calc_row(item, app.rates)
 
     bg = app.row_normal_bg(slot)
@@ -349,7 +360,11 @@ def update_row_slot(app, slot, item, row_index):
         slot["new_badge"].destroy()
         slot["new_badge"] = None
 
-    slot["partno_label"].configure(text=shorten(item["part_no"] or f"NO. {row_index + 1} 미입력", 15))
+    # 중복 행은 배경만으로도 눈에 띄지만, 어느 칸 때문에 물들었는지 알 수 있게 품번 글자색도
+    # 함께 바꾼다(색맹 사용자를 위해 배경 하나에만 기대지 않는다).
+    slot["partno_label"].configure(
+        text=shorten(item["part_no"] or f"NO. {row_index + 1} 미입력", 15),
+        fg=c["row_dup_fg"] if slot["duplicate"] else c["text"])
     slot["date_label"].configure(text=item["created_at"])
     slot["partname_label"].configure(text=shorten(item["part_name"] or "품명 미입력", 40))
     slot["comment_label"].configure(text=shorten(one_line(item.get("comment", "")) or "-", 20))

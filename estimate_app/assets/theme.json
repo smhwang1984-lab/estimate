@@ -43,7 +43,10 @@
     "row_bg": "#ffffff",
     "row_alt_bg": "#f9fbff",
     "row_hover": "#eef4ff",
-    "row_selected_bg": "#f0eefe"
+    "row_selected_bg": "#f0eefe",
+    "row_dup_bg": "#fdeee4",
+    "row_dup_alt_bg": "#fbe6d8",
+    "row_dup_fg": "#a4400f"
   },
   "fonts": {
     "family": "맑은 고딕",
@@ -117,7 +120,10 @@
       "row_bg": "#141b23",
       "row_alt_bg": "#171f28",
       "row_hover": "#212a35",
-      "row_selected_bg": "#1c3042"
+      "row_selected_bg": "#1c3042",
+      "row_dup_bg": "#3a2318",
+      "row_dup_alt_bg": "#402719",
+      "row_dup_fg": "#ffb787"
     }
   }
 }
