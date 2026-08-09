@@ -6,15 +6,34 @@
     Material       카드 입력창의 선택 목록. 여기서 추가·삭제한다(요청 6-3).
     회사 / 양식    기계 시트 푸터의 회사명·작성자와, 견적서 시트 맨 위 문구(요청 6-4, 7-1).
     소재 비중      v0.1.0 신설. 카드에서 무게를 계산할 때 쓰는 소재별 비중(요청 4-2).
+    데이터 위치    v0.1.4 신설. 위 값들과 견적 보관함을 어느 폴더에 둘지(네트워크 공유).
 
-값은 `%LOCALAPPDATA%\\MachineEstimate\\settings.json`에 저장한다(core/settings.py).
+값은 `settings.json`에 저장한다(core/settings.py). 기본 자리는
+`%LOCALAPPDATA%\\MachineEstimate`이고, v0.1.4부터 '데이터 위치' 탭에서 공유 폴더로 옮길 수 있다.
 """
 
+import os
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
-from ..core import config, settings as settings_store
+from ..core import config, datastore, settings as settings_store
 from ..core.model import parse_number
+
+# 데이터 위치 변경 결과를 사람이 읽는 문장으로. 어느 쪽 설정이 이겼는지 반드시 알린다 --
+# 말없이 기본값으로 시작하면 사용자에게는 "내 단가가 초기화됐다"로 보인다.
+_LOCATION_ACTION = {
+    "adopted": "그 폴더에 이미 있던 설정을 가져왔습니다. 이 PC에서 쓰던 값 대신 공유 폴더의 값이 적용됩니다.",
+    "copied": "폴더가 비어 있어 이 PC에서 쓰던 설정을 복사해 넣었습니다.",
+    "fresh": "폴더가 비어 있지만, 직전에 설정을 읽지 못한 상태라 복사하지 않았습니다."
+             " 기본값으로 시작하니 단가와 소재 목록을 확인해 주세요.",
+}
+_LOCATION_ERROR = {
+    datastore.REASON_MISSING: "그 폴더를 찾을 수 없습니다.",
+    datastore.REASON_UNREACHABLE: "그 폴더에 연결하지 못했습니다. 네트워크 연결과 경로를 확인해 주세요.",
+    datastore.REASON_READONLY: "그 폴더에 쓸 수 없습니다. 폴더 권한을 확인해 주세요.",
+    "broken": "그 폴더의 settings.json을 읽을 수 없습니다. 파일이 깨졌을 수 있습니다.",
+    "location_write_failed": "설정 위치를 기록하지 못했습니다.",
+}
 
 # (설정 키, 화면 라벨, 도움말). 견적서 상단은 라벨 문구를 코드가 붙이므로 알맹이만 입력받는다.
 CLIENT_FIELDS = [
@@ -205,6 +224,122 @@ def _build_machine_spec_row(parent, machine_current):
     ttk.Label(box, text="최고 회전수(RPM)").pack(side=tk.LEFT)
     ttk.Entry(box, textvariable=variables["max_rpm"], width=8).pack(side=tk.LEFT, padx=(4, 0))
     return variables
+
+
+def _build_location_tab(notebook, app, dialog):
+    """데이터 위치 탭(v0.1.4). 네트워크 공유 폴더를 고르는 곳이다.
+
+    다른 탭과 달리 아래 '저장' 버튼을 거치지 않는다 -- 폴더를 바꾸면 단가·소재 같은 값의
+    출처 자체가 달라지므로, 화면에 떠 있는 옛 값을 그대로 새 폴더에 쓰면 안 되기 때문이다.
+    적용하면 설정창을 닫고 새 폴더에서 다시 읽는다.
+    """
+    tab = ttk.Frame(notebook, padding=14)
+    notebook.add(tab, text="데이터 위치")
+
+    ttk.Label(tab, wraplength=760, justify="left", style="Muted.TLabel",
+              text="단가·Material 목록·소재 비중·가공 조건·회사 정보와 '견적 보관함'을 어디에 둘지"
+                   " 정합니다.\n네트워크 공유 폴더를 지정하면 여러 PC가 같은 기준으로 견적을 내고,"
+                   " 저장한 견적을 서로 열어 볼 수 있습니다."
+              ).pack(anchor="w", pady=(0, 12))
+
+    ttk.Label(tab, wraplength=760, justify="left",
+              text="※ 이 탭은 아래 [저장] 버튼과 상관없이 누르는 즉시 적용됩니다."
+              ).pack(anchor="w", pady=(0, 10))
+
+    status_var = tk.StringVar()
+    path_var = tk.StringVar()
+
+    box = ttk.LabelFrame(tab, text="현재 위치", padding=12)
+    box.pack(fill=tk.X)
+    ttk.Label(box, textvariable=status_var, wraplength=720, justify="left").pack(anchor="w")
+
+    pick = ttk.LabelFrame(tab, text="공유 폴더 지정", padding=12)
+    pick.pack(fill=tk.X, pady=(14, 0))
+    row = ttk.Frame(pick)
+    row.pack(fill=tk.X)
+    ttk.Entry(row, textvariable=path_var, width=64).pack(side=tk.LEFT, fill=tk.X, expand=True)
+    ttk.Button(row, text="찾아보기…",
+               command=lambda: _browse_folder(dialog, path_var)).pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Label(pick, style="Muted.TLabel", wraplength=720, justify="left",
+              text=r"네트워크 경로는 \\서버이름\공유폴더\Estimate 처럼 직접 적어도 됩니다."
+                   " 모든 PC가 같은 폴더를 가리켜야 하며, 그 폴더에 읽기·쓰기 권한이 있어야 합니다."
+              ).pack(anchor="w", pady=(10, 0))
+
+    def refresh_status():
+        state = datastore.get_state(recheck=True)
+        location = datastore.load_location()
+        lines = [f"폴더: {state['dir']}", f"상태: {datastore.describe(state)}"]
+        error = settings_store.get_load_error()
+        if error:
+            lines.append("설정 파일을 읽지 못해 지금은 기본값이 보입니다."
+                         " 이 상태에서는 설정을 저장하지 않습니다(공유 파일이 기본값으로"
+                         " 덮어써지는 것을 막기 위해서입니다).")
+        status_var.set("\n".join(lines))
+        if location["path"] and not path_var.get().strip():
+            path_var.set(location["path"])
+
+    def apply_location(path, enabled):
+        result = settings_store.relocate(path, enabled)
+        if not result["ok"]:
+            detail = _LOCATION_ERROR.get(result["reason"], "폴더를 사용할 수 없습니다.")
+            # 네트워크 경로는 '폴더가 없다'와 '서버에 못 닿는다'가 겉으로 똑같이 보인다
+            # (연결이 끊기면 윈도우도 그냥 '없음'으로 답한다). 확인할 곳을 같이 알려 준다.
+            if str(path).startswith("\\\\") and result["reason"] == datastore.REASON_MISSING:
+                detail += " 서버 이름·공유 이름이 맞는지, 그 PC에 접근할 수 있는지 확인해 주세요."
+            messagebox.showerror("데이터 위치 변경 실패", f"{detail}\n\n{path or ''}", parent=dialog)
+            refresh_status()
+            return
+        app.apply_settings(result["settings"])
+        app.library_current = None  # 폴더가 바뀌면 보관함도 다른 곳을 본다
+        messagebox.showinfo("데이터 위치 변경",
+                            f"{_LOCATION_ACTION[result['action']]}\n\n"
+                            f"폴더: {datastore.get_data_dir()}\n\n"
+                            f"설정창을 닫습니다. 바뀐 값을 보려면 다시 열어 주세요.",
+                            parent=dialog)
+        dialog.destroy()
+
+    def use_shared():
+        path = path_var.get().strip()
+        if not path:
+            messagebox.showinfo("경로 없음", "사용할 폴더를 고르거나 경로를 적어 주세요.", parent=dialog)
+            return
+        apply_location(path, True)
+
+    def use_local():
+        if not datastore.is_shared():
+            messagebox.showinfo("이미 로컬", "이미 이 PC에만 저장하고 있습니다.", parent=dialog)
+            return
+        if not messagebox.askyesno(
+                "로컬로 되돌리기",
+                "이 PC의 기본 폴더(%LOCALAPPDATA%\\MachineEstimate)로 되돌립니다.\n\n"
+                "공유 폴더의 파일은 지우지 않습니다. 다만 이 PC의 단가·소재 설정은"
+                " 공유 폴더로 옮기기 전 값으로 돌아갑니다. 계속할까요?",
+                default="no", parent=dialog):
+            return
+        apply_location("", False)
+
+    buttons = ttk.Frame(tab, padding=(0, 14, 0, 0))
+    buttons.pack(fill=tk.X)
+    ttk.Button(buttons, text="이 폴더 사용", command=use_shared).pack(side=tk.LEFT)
+    ttk.Button(buttons, text="다시 확인", command=refresh_status).pack(side=tk.LEFT, padx=8)
+    ttk.Button(buttons, text="이 PC에만 저장(기본값)", command=use_local).pack(side=tk.LEFT)
+
+    ttk.Label(tab, style="Muted.TLabel", wraplength=760, justify="left",
+              text="작업 중인 카드 목록(자동 저장)과 업데이트 기록은 공유하지 않고 PC마다 따로 둡니다."
+                   " 자동 저장은 물어보지 않고 덮어쓰기 때문에, 두 사람이 같이 켜 두면 나중에 끈"
+                   " 쪽이 앞사람 작업을 지워 버립니다. 여러 PC가 견적을 주고받는 일은"
+                   " '견적 저장 / 견적 불러오기'(견적 보관함)가 맡습니다."
+              ).pack(anchor="w", pady=(16, 0))
+
+    refresh_status()
+
+
+def _browse_folder(dialog, path_var):
+    initial = path_var.get().strip() or None
+    chosen = filedialog.askdirectory(parent=dialog, title="데이터를 저장할 폴더 선택",
+                                     initialdir=initial, mustexist=True)
+    if chosen:
+        path_var.set(os.path.normpath(chosen))
 
 
 def open_settings_dialog(app):
@@ -443,6 +578,11 @@ def open_settings_dialog(app):
               text="견적 날짜는 저장하는 날짜(yyyy-mm-dd)로 자동으로 들어갑니다.",
               style="Muted.TLabel", wraplength=380, justify="left").pack(anchor="w", pady=(12, 0))
 
+    # ---------- 6) 데이터 위치 (v0.1.4) ----------
+    # 이 탭만 '저장' 버튼과 무관하게 즉시 적용된다. 폴더를 바꾸는 순간 다른 탭이 들고 있는
+    # 값(옛 폴더에서 읽은 단가 등)이 통째로 낡기 때문에, 적용하면 이 창을 닫고 새로 열게 한다.
+    _build_location_tab(notebook, app, dialog)
+
     # ---------- 저장 / 취소 ----------
     result = {"saved": False}
 
@@ -494,8 +634,15 @@ def open_settings_dialog(app):
             "mill_materials": get_mill_materials(),
         }
         if not settings_store.save(payload):
+            # v0.1.4: 공유 폴더를 못 읽은 상태에서는 save()가 일부러 거부한다.
+            # 그 경우와 진짜 쓰기 실패를 구분해서 알린다.
+            error = settings_store.get_load_error()
+            detail = ("설정 파일을 읽지 못한 상태라 저장하지 않았습니다.\n"
+                      "지금 화면에 보이는 값은 기본값이며, 이대로 저장하면 공유 폴더의 설정이"
+                      " 모두 기본값으로 바뀝니다.\n\n'데이터 위치' 탭에서 폴더 상태를 확인해 주세요."
+                      if error else "설정을 저장하지 못했습니다. 폴더 권한을 확인해 주세요.")
             messagebox.showerror("저장 오류",
-                                 f"설정을 저장하지 못했습니다.\n{settings_store.get_settings_path()}",
+                                 f"{detail}\n\n{settings_store.get_settings_path()}",
                                  parent=dialog)
             return
         app.apply_settings(settings_store.load())

@@ -164,10 +164,16 @@ def _persist_column_widths(app):
     """settings.json에 지금 열 폭을 남긴다(요청 3-3). 드래그를 끝낸 순간(손을 뗄 때)만 쓴다
     -- 끄는 동안 매 픽셀마다 파일에 쓰면 느려진다.
     """
-    payload = dict(app.settings)
+    # v0.1.4: 반드시 파일에서 다시 읽어 그 위에 열 폭만 얹는다. app.settings는 프로그램을
+    # 켤 때 읽은 사본이라, 공유 폴더를 쓰는 중에 다른 PC가 단가를 고쳤다면 낡은 값이다.
+    # 그대로 통째로 저장하면 열 구분선을 끄는 것만으로 남의 단가 수정이 날아간다
+    # (파일이 로컬이던 v0.1.3까지는 생길 수 없던 사고다).
+    payload = settings_store.load()
     payload["col_widths"] = dict(app.col_widths)
     if settings_store.save(payload):
-        app.settings = payload
+        # 화면에는 열 폭만 반영한다. 방금 읽어 온 단가까지 app에 밀어 넣으면 열 구분선을
+        # 끌었을 뿐인데 표의 금액이 통째로 바뀌어 버린다(그건 설정창이 할 일이다).
+        app.settings["col_widths"] = dict(app.col_widths)
 
 
 def _reposition_resizers(header, handles):

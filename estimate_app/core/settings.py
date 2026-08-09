@@ -1,8 +1,19 @@
 """설정창에서 고친 값을 담아 두는 저장소(v0.0.9 신설).
 
-저장 위치는 `%LOCALAPPDATA%\\MachineEstimate\\settings.json` 이다.
+저장 위치는 기본이 `%LOCALAPPDATA%\\MachineEstimate\\settings.json` 이다.
 설치 폴더({app})는 Program Files라 일반 사용자 권한으로 쓸 수 없어서, 사용자가 화면에서
-고치는 값은 전부 여기로 보낸다(세션 파일과 같은 자리).
+고치는 값은 전부 여기로 보낸다.
+
+v0.1.4부터는 사용자가 설정창에서 데이터 폴더를 공유 폴더로 바꿀 수 있다
+(`core/datastore.py`). 여러 PC가 같은 단가·소재 기준을 보게 하려는 것이다.
+그래서 이 파일이 **네트워크 너머에 있을 수 있고**, 아래 두 가지가 v0.1.4에서 추가됐다.
+
+    1. 읽기 실패를 구분한다. '파일 없음'(처음 쓰는 정상 상태)과 '경로에 못 닿음'은
+       전혀 다르다. 못 닿았는데 기본값으로 시작했다가 사용자가 뭔가 저장하면,
+       공유 settings.json이 모두에게 기본값으로 덮어써진다. 그래서 못 닿은 뒤에는
+       save()가 아예 거부한다(`get_load_error()`로 이유를 알려 준다).
+    2. 저장은 임시 파일 + 이름 바꿔치기로 한다(datastore.write_json_atomic).
+       쓰는 도중 연결이 끊겨도 잘린 파일이 남지 않는다.
 
 이 파일이 없거나 망가져도 프로그램이 뜨지 않는 일이 없도록, 코드 안의 기본값 위에
 파일 내용을 덮어쓰는 방식으로 읽는다(config.py와 같은 규칙).
@@ -32,13 +43,14 @@ client / supplier 값은 라벨을 뺀 알맹이만 담는다. 예를 들어 `cl
 `부   서 :` 같은 양식 문구까지 다시 적지 않아도 되게 하기 위해서다.
 """
 
-import json
-import os
-
-from . import paths
+from . import datastore
 from .config import DEFAULT_RATES
 
 SETTINGS_FILE = "settings.json"
+
+# 마지막 load()가 '경로에 못 닿아' 기본값을 돌려줬는가. 여기 값이 남아 있는 동안은
+# save()가 거부한다 — 읽지 못한 값을 되쓰면 공유 파일이 기본값으로 날아간다.
+_load_error = None
 
 # 회사명/작성자 기본값은 요청서(v0.0.9.md 3-5)의 표기를 그대로 쓴다.
 DEFAULT_COMPANY = {
@@ -191,7 +203,13 @@ MILL_MATERIAL_NUMERIC_FIELDS = ["kc", "vc", "fz", "ap", "ae"]
 
 
 def get_settings_path():
-    return paths.get_user_file(SETTINGS_FILE)
+    """지금 쓰는 settings.json의 실제 경로. 공유 폴더를 지정했으면 그쪽이다."""
+    return datastore.get_data_file(SETTINGS_FILE)
+
+
+def get_load_error():
+    """마지막 load()가 경로에 못 닿았으면 그 이유, 정상이면 None."""
+    return _load_error
 
 
 def _merged(defaults, override):
@@ -332,15 +350,27 @@ def resolve_density(material_text, densities):
 
 
 def load():
-    """저장된 설정을 읽어 온다. 파일이 없거나 깨졌으면 기본값 그대로 돌려준다."""
+    """저장된 설정을 읽어 온다. 파일이 없거나 깨졌으면 기본값 그대로 돌려준다.
+
+    v0.1.4: '파일이 없다'와 '경로에 못 닿는다'를 구분한다. 뒤쪽이면 `_load_error`를 세워
+    두고, 그 뒤로는 save()가 거부한다(위 파일 첫머리 설명 참고).
+    """
+    global _load_error
+    _load_error = None
     payload = {}
-    try:
-        with open(get_settings_path(), "r", encoding="utf-8") as handle:
-            loaded = json.load(handle)
-        if isinstance(loaded, dict):
+
+    state = datastore.get_state()
+    if not state["ok"]:
+        # 폴더 자체에 못 닿는다. 파일을 열어 보려 하면 SMB 대기 시간만 더 쓴다.
+        _load_error = state["reason"]
+    else:
+        loaded, error = datastore.read_json(get_settings_path())
+        if error in (datastore.REASON_UNREACHABLE, "broken"):
+            # 깨진 파일도 여기 넣는다 — 내용이 무엇이었는지 모르는 채 덮어쓰면
+            # 공유 폴더에서는 남의 설정을 통째로 날리는 것과 같다.
+            _load_error = error
+        elif isinstance(loaded, dict):
             payload = loaded
-    except (OSError, ValueError):
-        payload = {}
 
     rates = _merged(DEFAULT_RATES, payload.get("rates"))
     for key, value in rates.items():
@@ -370,8 +400,17 @@ def load():
     }
 
 
-def save(data):
-    """설정을 파일로 남긴다. 저장에 실패하면 False."""
+def save(data, force=False):
+    """설정을 파일로 남긴다. 저장에 실패하면 False.
+
+    마지막 읽기가 실패한 상태(`_load_error`)에서는 저장하지 않는다 — 지금 손에 든 값은
+    사용자가 고친 설정이 아니라 코드 안의 기본값이고, 그걸 공유 폴더에 쓰면 모두의 단가가
+    한 번에 날아간다. `force=True`는 데이터 폴더를 옮기면서 설정을 이관할 때만 쓴다
+    (그때는 원본이 무엇인지 알고 옮기는 것이므로 덮어써도 된다).
+    """
+    if _load_error and not force:
+        return False
+
     col_widths = data.get("col_widths")
     payload = {
         "rates": {key: float(value) for key, value in data["rates"].items()},
@@ -388,14 +427,58 @@ def save(data):
         "mill_materials": _clean_material_rows(
             data.get("mill_materials"), DEFAULT_MILL_MATERIALS, MILL_MATERIAL_NUMERIC_FIELDS),
     }
-    path = get_settings_path()
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-        return True
-    except OSError:
-        return False
+    # 임시 파일에 다 쓴 뒤 바꿔치기한다(네트워크 폴더에서 잘린 파일이 남지 않게).
+    return datastore.write_json_atomic(get_settings_path(), payload)
+
+
+def relocate(new_path, enabled=True):
+    """데이터 폴더를 옮긴다(v0.1.4). 결과를 dict로 돌려준다.
+
+        ok      성공 여부
+        reason  실패 이유(datastore의 REASON_* / "broken" / "location_write_failed")
+        action  "adopted"  옮긴 곳에 이미 settings.json이 있어 그 값을 쓰기로 했다
+                "copied"   비어 있어서 지금 쓰던 설정을 복사해 갔다
+                "fresh"    비어 있지만 지금 값이 못 미더워 복사하지 않았다(아래 설명)
+        settings 옮긴 뒤 실제로 쓰게 된 설정값
+
+    어느 쪽 값이 이겼는지 반드시 화면에 알려야 한다. 말없이 기본값으로 시작하면
+    사용자에게는 "내 단가가 다 초기화됐다"로 보인다.
+
+    'fresh'는 옮기기 직전의 읽기가 실패했던 경우다. 그때 손에 든 값은 사용자가 고친
+    설정이 아니라 코드 안의 기본값이라, 그걸 새 폴더에 복사하면 기본값을 진짜 설정인
+    것처럼 굳혀 버린다. 복사하지 않고 새 폴더에서 처음부터 시작한다.
+    """
+    previous = datastore.load_location()
+    current_values = load()
+    had_load_error = get_load_error()
+
+    if enabled:
+        reason = datastore.probe(new_path)
+        if reason != datastore.REASON_OK:
+            return {"ok": False, "reason": reason}
+
+    if not datastore.save_location(new_path if enabled else "", enabled):
+        return {"ok": False, "reason": "location_write_failed"}
+    datastore.get_state(recheck=True)
+
+    target, error = datastore.read_json(get_settings_path())
+    if error in (datastore.REASON_UNREACHABLE, "broken"):
+        # 옮긴 곳의 파일이 수상하다. 원래 위치로 되돌려 놓고 알린다 — 이 상태로 두면
+        # 사용자는 설정을 못 고치는 창을 보게 된다.
+        datastore.save_location(previous["path"], previous["enabled"])
+        datastore.get_state(recheck=True)
+        load()
+        return {"ok": False, "reason": error}
+
+    if isinstance(target, dict):
+        action = "adopted"
+    elif had_load_error:
+        action = "fresh"
+    else:
+        save(current_values, force=True)
+        action = "copied"
+
+    return {"ok": True, "reason": None, "action": action, "settings": load()}
 
 
 def writer_line(company):

@@ -7,11 +7,12 @@ from datetime import datetime
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from .. import APP_TITLE, APP_VERSION
-from ..core import excel_io, paths, session, settings as settings_store, updater
+from ..core import datastore, excel_io, paths, session, settings as settings_store, updater
 from ..core.model import (create_blank_item, filter_items, find_duplicate_part_nos, get_next_no,
                           has_item_data, normalize_part_no)
 from ..core.pricing import calc_total_amount
 from .condition_dialog import open_condition_dialog
+from .library_dialog import open_library_dialog
 from .popup import open_item_popup
 from .settings_dialog import open_settings_dialog
 from .table import (COLUMNS, build_header, build_header_underline, create_row_slot,
@@ -59,6 +60,10 @@ class EstimateApp:
         self.empty_frame = None
         self.open_popups = {}
         self.settings_window = None
+        # v0.1.4: 견적 보관함(core/library.py). 방금 불러오거나 저장한 견적이 무엇인지
+        # 기억해 둔다 -- 저장할 때 "내가 불러온 뒤 남이 고쳤는지"를 mtime으로 판단하는 데 쓴다.
+        self.library_window = None
+        self.library_current = None
         # v0.1.1: 가공조건 산출기(Mill/Lathe). 카드 데이터를 읽기만 하고 고치지 않으므로
         # 세션·저장 경로와는 무관하다.
         self.condition_window = None
@@ -88,6 +93,9 @@ class EstimateApp:
         # 보이지 않도록 창을 먼저 띄우고, 목록은 곧바로 이어서 채운다.
         self.summary_var.set("목록을 불러오는 중입니다...")
         self.root.after_idle(lambda: self.refresh_table(True))
+        # v0.1.4: 공유 폴더 경고를 업데이트 확인보다 먼저 띄운다(설정이 기본값으로 보이는
+        # 이유를 먼저 알려야 사용자가 값을 다시 입력하는 헛수고를 안 한다).
+        self.root.after(400, self.check_data_location)
         self.root.after(800, self.check_for_update)
 
     # ---------- 창 기본 동작 ----------
@@ -154,6 +162,12 @@ class EstimateApp:
 
         actions = tk.Frame(self.header_canvas, bg=c["panel_2"])
         ttk.Button(actions, text="기계 시트 업로드", command=self.upload_excel_file).pack(side=tk.LEFT, padx=4)
+        # v0.1.4: 견적 보관함. 파일을 다루는 동작이라 업로드 옆에 둔다(보조 기능 줄은
+        # 이미 다섯 개라 더 붙이면 좁은 화면에서 밀린다).
+        ttk.Button(actions, text="견적 불러오기",
+                   command=lambda: self.open_library("load")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(actions, text="견적 저장",
+                   command=lambda: self.open_library("save")).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="새 항목 추가", command=self.add_row).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="설정", command=self.open_settings).pack(side=tk.LEFT, padx=4)
         self.header_actions_id = self.header_canvas.create_window(
@@ -258,6 +272,60 @@ class EstimateApp:
             item = next((row for row in self.data if row["no"] == no), None)
         open_condition_dialog(self, item=item, popup=None)
 
+    # ---------- 견적 보관함 (v0.1.4) ----------
+
+    def open_library(self, mode):
+        open_library_dialog(self, mode)
+
+    def apply_library_entry(self, payload, path):
+        """보관함에서 불러온 견적으로 현재 카드 목록을 통째로 바꾼다. 성공하면 True.
+
+        되돌리기(Ctrl+Z)는 삭제 전용이라 여기서는 쓰지 않는다 -- 물어보고 바꾸는 동작이라
+        되돌리기까지 붙이면 "지금 화면이 어느 견적인지"가 흐려진다. 대신 바꾸기 전에
+        library_dialog가 반드시 확인을 받는다.
+
+        입력창(팝업)이 열려 있으면 바꾸지 않는다 -- delete_items와 똑같은 이유다.
+        popup.py의 save_and_close()는 팝업을 열 때 붙잡아 둔 item dict를 직접 고치는데,
+        그 카드가 app.data에서 통째로 빠지면 저장을 눌러도 오류 없이 조용히 사라진다.
+        """
+        if self.open_popups:
+            messagebox.showwarning(
+                "불러올 수 없음",
+                f"항목 입력창 {len(self.open_popups)}개가 열려 있습니다.\n"
+                f"입력창을 모두 닫은 뒤 다시 불러와 주세요.\n\n"
+                f"(입력창은 지금 카드를 직접 고치고 있어서, 목록이 통째로 바뀌면 그 입력이"
+                f" 저장되지 않고 사라집니다.)")
+            return False
+        self.data = payload["items"]
+        self.selected_nos = set()
+        self.anchor_no = None
+        self.last_deleted = []
+        self.library_current = {"title": payload["title"], "path": path, "mtime": payload["mtime"]}
+        # 불러온 견적은 이미 저장된 것이므로 NEW 배지를 붙이지 않는다.
+        for item in self.data:
+            item["save_pending"] = False
+        self.save_session()
+        self.refresh_table(True)
+        return True
+
+    def check_data_location(self):
+        """공유 폴더를 못 읽었으면 시작할 때 알린다(v0.1.4).
+
+        이 경고가 없으면 사용자는 기본 단가가 뜬 화면을 보고 "설정이 초기화됐다"고 판단해
+        값을 다시 입력하게 된다. 그 상태에서는 설정 저장이 막혀 있다는 것도 같이 알린다.
+        """
+        error = settings_store.get_load_error()
+        if not error:
+            return
+        state = datastore.get_state()
+        messagebox.showwarning(
+            "설정을 읽지 못했습니다",
+            f"{datastore.describe(state)}\n\n폴더: {state['dir']}\n\n"
+            f"지금 화면의 단가·소재 목록은 기본값입니다. 잘못된 값이 공유 폴더에 덮어써지지"
+            f" 않도록 설정 저장을 막아 두었습니다.\n\n"
+            f"네트워크 연결을 확인한 뒤 프로그램을 다시 켜거나, [설정 > 데이터 위치]에서"
+            f" 폴더를 다시 지정해 주세요.")
+
     def apply_settings(self, new_settings):
         """설정창에서 저장한 값을 화면 전체에 반영한다(요청 6-1)."""
         self.settings = new_settings
@@ -320,8 +388,19 @@ class EstimateApp:
             session_note = f"  |  세션 복원 {self.session_restored_count}건 (저장 {self.session_saved_at})"
         else:
             session_note = "  |  새 세션 (저장된 데이터 없음)"
+        # v0.1.4: 공유 폴더를 쓰는 중인지, 지금 화면이 보관함의 어느 견적인지 한눈에 보이게
+        # 한다 -- 네트워크에서는 "내가 지금 무엇을 고치고 있는가"가 사고를 막는 정보다.
+        state = datastore.get_state()
+        if not state["shared"]:
+            location_note = ""
+        elif state["ok"]:
+            location_note = "  |  공유 폴더"
+        else:
+            location_note = "  |  공유 폴더 연결 안 됨"
+        library_note = f"  |  보관함 '{self.library_current['title']}'" if self.library_current else ""
         return (f"작성일 {today}  |  항목 {len(all_items)}건  |  총 견적금액 {total_amount:,}원"
-               f"{search_note}{select_note}{duplicate_note}{session_note}")
+               f"{search_note}{select_note}{duplicate_note}{session_note}"
+               f"{location_note}{library_note}")
 
     def update_summary_text(self):
         """표 위젯은 건드리지 않고 상단 요약줄(선택 건수 등)만 다시 계산한다."""
