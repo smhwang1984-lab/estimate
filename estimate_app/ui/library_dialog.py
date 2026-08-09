@@ -161,13 +161,9 @@ def open_library_dialog(app, mode="load"):
         path = library.entry_path(title)
         existing_mtime = library.get_mtime(path)
         if existing_mtime is not None:
-            current = app.library_current or {}
             # 내가 불러온 뒤 다른 사람이 같은 파일을 고쳐 놨는지 본다. 잠금을 걸지 않는
             # 대신(library.py 첫머리 참고) 덮어쓰기 직전에 확인해서 알린다.
-            changed_by_other = (current.get("path") == path
-                                and current.get("mtime") is not None
-                                and current["mtime"] != existing_mtime)
-            if changed_by_other:
+            if library.is_changed_by_other(app.library_current, path, existing_mtime):
                 stamp = datetime.fromtimestamp(existing_mtime).strftime("%Y-%m-%d %H:%M:%S")
                 if not messagebox.askyesno(
                         "다른 사람이 고쳤습니다",
@@ -188,6 +184,9 @@ def open_library_dialog(app, mode="load"):
                 f"데이터 위치 설정과 폴더 권한을 확인해 주세요.", parent=dialog)
             return
         app.library_current = {"title": title, "path": result["path"], "mtime": result["mtime"]}
+        # 세션에도 바로 남긴다 -- 저장 직후 프로그램을 끄면 이 참조가 사라져, 다음에 켰을 때
+        # 덮어쓰기 충돌 판정의 기준점을 잃는다.
+        app.save_session()
         messagebox.showinfo("저장 완료",
                             f"'{title}' {result['count']}건을 저장했습니다.\n\n{result['path']}",
                             parent=dialog)

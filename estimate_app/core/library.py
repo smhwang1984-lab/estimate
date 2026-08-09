@@ -69,6 +69,22 @@ def _who():
     return f"{user}@{host}"
 
 
+def is_changed_by_other(library_current, path, existing_mtime):
+    """저장하려는 파일이 '내가 불러온 뒤 다른 곳에서 바뀐' 것인가.
+
+    화면 코드가 아니라 여기 두는 이유는 이 판정이 헤드리스로 검증 가능해야 하기 때문이다.
+    `library_current`는 세션에도 저장되므로(session.py 참고) 프로그램을 껐다 켠 뒤에도
+    같은 기준으로 판정한다. 참조가 없거나 다른 파일을 가리키면 False -- 그때는 평범한
+    '이미 있습니다, 덮어쓸까요?' 확인으로 내려간다.
+    """
+    if not isinstance(library_current, dict) or existing_mtime is None:
+        return False
+    if library_current.get("path") != path:
+        return False
+    known = library_current.get("mtime")
+    return known is not None and known != existing_mtime
+
+
 def list_entries():
     """(목록, 오류). 오류는 None / datastore의 reason 값.
 

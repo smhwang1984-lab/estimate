@@ -337,7 +337,7 @@ class EstimateApp:
 
     def save_session(self):
         search_text = self.search_var.get() if hasattr(self, "search_var") else ""
-        session.save(self.data, self.selected_nos, search_text)
+        session.save(self.data, self.selected_nos, search_text, self.library_current)
 
     def restore_session(self):
         payload = session.load()
@@ -345,6 +345,9 @@ class EstimateApp:
             return
         self.data = payload["items"]
         self.selected_nos = set(payload["selected_nos"])
+        # v0.1.4: 보관함 참조도 되살린다. 이게 없으면 프로그램을 껐다 켠 뒤 같은 견적을
+        # 저장할 때 "다른 사람이 고쳤습니다" 경고가 조용히 죽는다(session.py 첫머리 참고).
+        self.library_current = payload.get("library")
         if hasattr(self, "search_var"):
             self.search_var.set(payload["search"])
         self.session_restored_count = len(self.data)

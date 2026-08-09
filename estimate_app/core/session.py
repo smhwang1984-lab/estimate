@@ -23,13 +23,19 @@ def get_session_path():
     return paths.get_user_file(SESSION_FILE)
 
 
-def save(items, selected_nos, search_text):
+def save(items, selected_nos, search_text, library_current=None):
     # v0.0.9: 단가(rates)는 여기에 담지 않는다. 설정창(core/settings.py)이 단가의 유일한
     # 주인인데, 세션에도 담아 두면 프로그램을 켤 때 옛 세션 값이 새 설정을 덮어써 버린다.
+    #
+    # v0.1.4: library_current(지금 화면이 보관함의 어느 견적인지 + 불러온 시각의 mtime)는
+    # 여기에 담는다. 단가와 달리 '화면 상태'이고, 무엇보다 이게 없으면 프로그램을 껐다 켠
+    # 뒤에 덮어쓰기 충돌 경고가 조용히 죽는다 -- 아침에 불러온 견적을 낮에 다른 PC가
+    # 고쳐 놨는데, 저녁에 저장하면 그냥 "이미 있습니다"만 뜨고 남의 작업이 사라진다.
     payload = {
         "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "selected_nos": sorted(selected_nos),
         "search": search_text,
+        "library": library_current,
         "items": [item for item in items if has_item_data(item)],
     }
     # v0.1.4: 로컬이지만 여기도 임시 파일 + 바꿔치기로 쓴다. 저장은 프로그램을 끄는
@@ -50,9 +56,13 @@ def load():
         item = create_blank_item(raw_item.get("no", 0))
         item.update(raw_item)
         items.append(item)
+    library = payload.get("library")
     return {
         "items": items,
         "selected_nos": set(payload.get("selected_nos", [])),
         "search": payload.get("search", ""),
         "saved_at": payload.get("saved_at"),
+        # 옛 세션 파일에는 이 키가 없다. 그때는 None -- 덮어쓰기 판정이 v0.1.4 이전처럼
+        # 일반 확인창으로만 내려갈 뿐 오동작하지는 않는다.
+        "library": library if isinstance(library, dict) else None,
     }

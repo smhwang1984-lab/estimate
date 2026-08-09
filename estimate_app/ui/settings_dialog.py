@@ -291,6 +291,7 @@ def _build_location_tab(notebook, app, dialog):
             return
         app.apply_settings(result["settings"])
         app.library_current = None  # 폴더가 바뀌면 보관함도 다른 곳을 본다
+        app.save_session()          # 옛 폴더의 견적을 가리키는 참조가 세션에 남지 않게
         messagebox.showinfo("데이터 위치 변경",
                             f"{_LOCATION_ACTION[result['action']]}\n\n"
                             f"폴더: {datastore.get_data_dir()}\n\n"
