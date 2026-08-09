@@ -40,7 +40,7 @@ Windows 데스크톱 프로그램이다. 실무 사용자는 생산부장 1명 �
 | 브랜치 | `worktree-v0.0.9` — v0.0.9~v0.1.3이 함께 커밋돼 있다 — **`Estimate` 브랜치에 미병합** |
 | 원격 | **없음** (로컬 전용 저장소) |
 | 주 개발 브랜치 | `Estimate` (기본 브랜치는 `main`이지만 실제 작업은 `Estimate`에서 해 왔다) |
-| 설치 파일 | `installer\Output\MachineEstimate_Setup_v0.1.3.exe` (9,633,408바이트). 워크트리 밖 `C:\Users\SumH\Codex\Estimate\installer\Output\`에도 복사해 뒀다 |
+| 설치 파일 | `installer\Output\MachineEstimate_Setup_v0.1.3.exe` (9,633,408바이트). 워크트리 밖 배포 폴더 `C:\Users\SumH\orca\workspaces\Estimate\Estimate\installer\Output\`에도 복사해 뒀다 |
 | Python | 3.14 / openpyxl 3.1.5 / PyInstaller 6.21 |
 | 빌드 형태 | onedir (`dist\Estimate\Estimate.exe` + `_internal\`) |
 | 설치 경로 | `C:\Program Files (x86)\Estimate` |
@@ -188,8 +188,16 @@ python -m PyInstaller --noconfirm Machine_Estimate.spec
 ### 배포
 
 설치 파일은 `installer\Output\`에 생기며 `.gitignore`로 커밋되지 않는다.
-**워크트리에서 빌드했다면 워크트리 삭제 시 함께 사라지므로**, 사용자의 배포 폴더
-(`...\Estimate\installer\Output\`)로 복사해 둘 것.
+**워크트리에서 빌드했다면 워크트리 삭제 시 함께 사라지므로**, 사용자의 배포 폴더로
+복사해 둘 것. 배포 폴더는 여기다 — 경로를 줄여 적지 말 것:
+
+```
+C:\Users\SumH\orca\workspaces\Estimate\Estimate\installer\Output\
+```
+
+`C:\Users\SumH\Codex\Estimate\installer\Output\`도 존재하지만 **거기가 아니다**
+(v0.0.1·v0.0.2만 남아 있는 옛 폴더다). v0.1.3에서 실제로 이 둘을 헷갈려 사용자가
+설치 파일을 못 찾는 일이 있었다. v0.1.0~v0.1.3은 모두 위의 orca 경로에 있다.
 
 ### 사용자 데이터 위치
 
