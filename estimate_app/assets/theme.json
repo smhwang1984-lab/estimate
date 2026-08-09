@@ -67,13 +67,16 @@
     "page_size": 40,
     "cell_pad_x": 8,
     "cell_pad_y": 6,
-    "col_check_width": 56,
-    "col_model_width": 160,
-    "col_partno_width": 220,
-    "col_material_width": 130,
-    "col_size_width": 200,
-    "col_status_width": 120,
-    "col_price_width": 160
+    "col_no_width": 46,
+    "col_check_width": 50,
+    "col_model_width": 120,
+    "col_partno_width": 180,
+    "col_partname_width": 220,
+    "col_comment_width": 170,
+    "col_material_width": 120,
+    "col_size_width": 150,
+    "col_status_width": 100,
+    "col_price_width": 150
   },
   "presets": {
     "dark": {

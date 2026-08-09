@@ -78,33 +78,5 @@ def get_resource_path(filename):
     return candidates[0]
 
 
-def get_estimate_root_dir():
-    """날짜별 누적 저장이 들어가는 '견적_산정' 폴더.
-
-    이미 쓰고 있는 폴더가 있으면 그대로 쓴다. 하나도 없을 때만 새로 만드는데,
-    설치 폴더가 Program Files면 일반 사용자 권한으로 쓸 수 없으므로 내 문서 아래로 보낸다.
-    """
-    app_dir = get_app_dir()
-    candidates = [
-        os.path.join(app_dir, "견적_산정"),
-        os.path.join(os.path.dirname(app_dir), "견적_산정"),
-        os.path.join(os.getcwd(), "견적_산정"),
-        os.path.join(os.path.expanduser("~"), "Documents", "견적_산정"),
-    ]
-    for path in candidates:
-        if os.path.isdir(path):
-            return path
-    if _is_writable(app_dir):
-        return candidates[0]
-    return candidates[-1]
-
-
-def _is_writable(directory):
-    probe = os.path.join(directory, ".write_test.tmp")
-    try:
-        with open(probe, "w", encoding="utf-8") as handle:
-            handle.write("")
-        os.remove(probe)
-        return True
-    except OSError:
-        return False
+# v0.0.9: 날짜별 누적 저장(요청 4-2)을 없애면서 '견적_산정' 폴더를 찾던
+# get_estimate_root_dir()도 함께 걷어냈다. 저장 위치는 이제 항상 사용자가 대화상자에서 고른다.

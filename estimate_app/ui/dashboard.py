@@ -1,20 +1,19 @@
 """메인 화면(카드 목록)과 전체 흐름을 붙잡고 있는 클래스."""
 
 import os
-import shutil
 import subprocess
-import tempfile
 import tkinter as tk
 from datetime import datetime
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from .. import APP_TITLE, APP_VERSION
-from ..core import config, excel_io, paths, pdf_export, session, updater
+from ..core import excel_io, paths, session, settings as settings_store, updater
 from ..core.model import create_blank_item, filter_items, get_next_no, has_item_data
 from ..core.pricing import calc_total_amount
 from .popup import open_item_popup
+from .settings_dialog import open_settings_dialog
 from .table import (COLUMNS, build_header, build_header_underline, create_row_slot,
-                    hide_row_slot, render_empty_message, update_row_slot)
+                    hide_row_slot, paint_checkbox, render_empty_message, update_row_slot)
 from .theme import Theme
 
 
@@ -28,14 +27,20 @@ class EstimateApp:
         self._apply_window_icon()
 
         self.data = []
-        self.rates = config.load_rates()
+        # v0.0.9: 단가·Material 목록·회사 정보의 주인은 설정창이다(core/settings.py).
+        # 세션에는 더 이상 단가를 담지 않는다 — 담아 두면 옛 세션이 새 설정을 덮어쓴다.
+        self.settings = settings_store.load()
+        self.rates = self.settings["rates"]
         self.display_page_size = self.theme.layout["page_size"]
         self.display_limit = self.display_page_size
         self.session_restored_count = 0
         self.session_saved_at = None
-        self.is_saving = False
         self.search_after_id = None
         self.selected_nos = set()
+        # 화면에 보이는 차례. 맨 앞 No 열과 Shift 범위 선택이 이 순서를 기준으로 돈다.
+        self.visible_nos = []
+        self.display_nos = {}
+        self.anchor_no = None
         # 표 갱신 구조(v0.0.8): 행 위젯을 destroy 후 재생성하지 않고 풀로 재사용한다
         # (33행 기준 첫 그리기 약 3.9초 -> 위젯을 새로 만들지 않으면 훨씬 가벼워짐, 검색
         # 시 카드가 깜빡이던 것도 이 방식으로 같이 사라진다).
@@ -45,6 +50,7 @@ class EstimateApp:
         self.more_button = None
         self.empty_frame = None
         self.open_popups = {}
+        self.settings_window = None
 
         self.theme.apply(self.root)
         self.maximize_window()
@@ -91,26 +97,40 @@ class EstimateApp:
         # 헤더 바. PIL 없이 Canvas.create_line만으로 grad_from -> grad_to 좌->우 그라데이션을
         # 그린다(v0.0.8: 밝은 그라데이션 테마, 배포 용량 증가 0MB). 텍스트는 Canvas 항목이라
         # textvariable을 못 쓰므로 summary_var에 trace를 걸어 itemconfigure로 밀어 넣는다.
-        header_height = 112
+        #
+        # v0.0.9: 세 줄의 y 좌표를 112px 안에 손으로 박아 두었더니, 배율이 높은 화면
+        # (150%/200%)에서 글꼴만 커지고 좌표는 그대로라 제목과 요약줄이 서로 겹쳤다.
+        # 실제 글꼴 높이를 재서 줄을 쌓고 캔버스 높이도 거기에 맞춘다.
+        pad_y, gap = 12, 6
+        line_heights = [tkfont.Font(font=font).metrics("linespace")
+                        for font in (self.theme.header_title, self.theme.normal, self.theme.small)]
+        centers, cursor = [], pad_y
+        for height in line_heights:
+            centers.append(cursor + height // 2)
+            cursor += height + gap
+        header_height = cursor - gap + pad_y
+
         self.header_canvas = tk.Canvas(self.root, height=header_height,
                                        highlightthickness=0, bg=c["grad_fallback"])
         self.header_canvas.pack(fill=tk.X)
         self._header_width = 0
 
         self.header_title_id = self.header_canvas.create_text(
-            18, 24, anchor="w", text=APP_TITLE, fill=c["panel_fg"], font=self.theme.header_title)
+            18, centers[0], anchor="w", text=APP_TITLE, fill=c["panel_fg"],
+            font=self.theme.header_title)
         self.summary_var = tk.StringVar()
         self.summary_var.trace_add("write", lambda *args: self._sync_header_summary())
         self.header_summary_id = self.header_canvas.create_text(
-            18, 60, anchor="w", text="", fill=c["panel_muted_fg"], font=self.theme.normal)
+            18, centers[1], anchor="w", text="", fill=c["panel_muted_fg"], font=self.theme.normal)
         self.header_canvas.create_text(
-            18, 86, anchor="w", text="행을 클릭하면 팝업창에 항목 정보 전체와 상세 입력이 표시됩니다.",
+            18, centers[2], anchor="w",
+            text="행을 클릭하면 선택, 더블클릭하면 항목 입력창이 열립니다. Ctrl/Shift로 여러 건을 고를 수 있습니다.",
             fill=c["panel_muted_fg"], font=self.theme.small)
 
         actions = tk.Frame(self.header_canvas, bg=c["panel_2"])
         ttk.Button(actions, text="기계 시트 업로드", command=self.upload_excel_file).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="새 항목 추가", command=self.add_row).pack(side=tk.LEFT, padx=4)
-        ttk.Button(actions, text="날짜별 누적 저장", command=self.save_to_excel).pack(side=tk.LEFT, padx=4)
+        ttk.Button(actions, text="설정", command=self.open_settings).pack(side=tk.LEFT, padx=4)
         self.header_actions_id = self.header_canvas.create_window(
             0, header_height // 2, anchor="e", window=actions)
 
@@ -132,7 +152,6 @@ class EstimateApp:
         extra_actions.pack(side=tk.RIGHT)
         tk.Label(extra_actions, text="보조 기능", bg=c["bg"], fg=c["muted"],
                  font=self.theme.small).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(extra_actions, text="신규 입력 다운로드", command=self.add_download_row).pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="전체 선택", command=self.select_visible_items).pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="선택 해제", command=self.clear_selection).pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="선택 다운로드", command=self.export_selected_items).pack(side=tk.LEFT, padx=4)
@@ -186,18 +205,29 @@ class EstimateApp:
     def _on_mousewheel(self, event):
         self.row_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
+    # ---------- 설정 ----------
+
+    def open_settings(self):
+        open_settings_dialog(self)
+
+    def apply_settings(self, new_settings):
+        """설정창에서 저장한 값을 화면 전체에 반영한다(요청 6-1)."""
+        self.settings = new_settings
+        self.rates = new_settings["rates"]
+        # 단가가 바뀌면 모든 카드의 금액이 달라지므로 표와 요약줄을 다시 계산한다.
+        self.refresh_table(False)
+
     # ---------- 세션 ----------
 
     def save_session(self):
         search_text = self.search_var.get() if hasattr(self, "search_var") else ""
-        session.save(self.data, self.rates, self.selected_nos, search_text)
+        session.save(self.data, self.selected_nos, search_text)
 
     def restore_session(self):
         payload = session.load()
         if not payload:
             return
         self.data = payload["items"]
-        self.rates.update(payload["rates"])
         self.selected_nos = set(payload["selected_nos"])
         if hasattr(self, "search_var"):
             self.search_var.set(payload["search"])
@@ -208,6 +238,10 @@ class EstimateApp:
 
     def get_search_text(self):
         return self.search_var.get().strip() if hasattr(self, "search_var") else ""
+
+    def get_display_no(self, no):
+        """현황판에 보이는 순번. 목록에 없으면(검색에 걸러졌으면) 내부 번호를 그대로 쓴다."""
+        return self.display_nos.get(no, no)
 
     def schedule_refresh(self):
         # 타자를 칠 때마다 목록을 다시 그리지 않도록 잠깐 모았다가 한 번만 갱신한다.
@@ -273,6 +307,10 @@ class EstimateApp:
         while len(self.row_slots) < len(shown):
             self.row_slots.append(create_row_slot(self))
 
+        # 화면 순번은 여기서 한 번만 정하고, 팝업 제목·정보 타일도 이 값을 쓴다(요청 1-3, 4-5).
+        self.visible_nos = [item["no"] for item in shown]
+        self.display_nos = {no: index + 1 for index, no in enumerate(self.visible_nos)}
+
         self.no_to_slot = {}
         for row_index, item in enumerate(shown):
             slot = self.row_slots[row_index]
@@ -300,6 +338,8 @@ class EstimateApp:
         for slot in self.row_slots:
             hide_row_slot(slot)
         self.no_to_slot = {}
+        self.visible_nos = []
+        self.display_nos = {}
         self._hide_more_button()
 
     def _show_empty(self, title, detail):
@@ -329,18 +369,11 @@ class EstimateApp:
         slot = self.no_to_slot.get(no)
         if not slot:
             return
-        selected = no in self.selected_nos
-        c = self.theme.colors
         bg = self.row_normal_bg(slot)
         slot["frame"].configure(bg=bg)
         for widget in slot["tinted"]:
             widget.configure(bg=bg)
-        box_bg = c["accent"] if selected else c["card_alt"]
-        box_fg = c["bg"] if selected else c["muted"]
-        border = box_bg if selected else c["checkbox_border"]
-        checkbox = slot["checkbox"]
-        checkbox.configure(bg=box_bg, highlightbackground=border)
-        checkbox.glyph.configure(text=("V" if selected else ""), bg=box_bg, fg=box_fg)
+        paint_checkbox(self, slot, no in self.selected_nos)
 
     # ---------- 검색 / 선택 ----------
 
@@ -348,26 +381,52 @@ class EstimateApp:
         self.search_var.set("")
         self.refresh_table(True)
 
-    def toggle_item_selection(self, no, is_selected):
-        if is_selected:
-            self.selected_nos.add(no)
-        else:
-            self.selected_nos.discard(no)
-        self.update_row_visual(no)
+    def set_selection(self, new_selection):
+        """선택 집합을 통째로 바꾸되, 실제로 달라진 행만 다시 칠한다."""
+        new_selection = set(new_selection)
+        changed = self.selected_nos.symmetric_difference(new_selection)
+        self.selected_nos = new_selection
+        for no in changed:
+            self.update_row_visual(no)
         self.update_summary_text()
+
+    def handle_row_click(self, no, mode="plain"):
+        """윈도우 탐색기와 같은 선택 규칙(요청 2-1).
+
+            plain    이 행만 선택하고 나머지는 해제한다.
+            toggle   Ctrl+클릭. 이 행만 켜거나 끈다.
+            range    Shift+클릭. 마지막 기준 행부터 이 행까지 한 번에 고른다.
+
+        범위는 `self.data`의 저장 순서가 아니라 지금 화면에 보이는 순서를 기준으로 잡는다
+        (검색·정렬·더보기 상태에 따라 화면 순서가 달라지기 때문).
+        """
+        if mode == "range" and self.anchor_no in self.visible_nos and no in self.visible_nos:
+            start = self.visible_nos.index(self.anchor_no)
+            end = self.visible_nos.index(no)
+            if start > end:
+                start, end = end, start
+            self.set_selection(self.visible_nos[start:end + 1])
+            return  # 기준 행은 그대로 둬야 범위를 계속 늘렸다 줄였다 할 수 있다.
+        if mode == "toggle":
+            if no in self.selected_nos:
+                self.set_selection(self.selected_nos - {no})
+            else:
+                self.set_selection(self.selected_nos | {no})
+        else:
+            self.set_selection({no})
+        self.anchor_no = no
+
+    def toggle_item_selection(self, no):
+        """체크박스를 눌렀을 때. 체크박스는 언제나 그 행 하나만 켜고 끈다."""
+        self.handle_row_click(no, "toggle")
 
     def select_visible_items(self):
         _, visible_items = filter_items(self.data, self.get_search_text())
-        for item in visible_items:
-            self.selected_nos.add(item["no"])
-            self.update_row_visual(item["no"])
-        self.update_summary_text()
+        self.set_selection(self.selected_nos | {item["no"] for item in visible_items})
 
     def clear_selection(self):
-        for no in list(self.selected_nos):
-            self.selected_nos.discard(no)
-            self.update_row_visual(no)
-        self.update_summary_text()
+        self.set_selection(set())
+        self.anchor_no = None
 
     # ---------- 카드 추가 / 팝업 ----------
 
@@ -377,14 +436,8 @@ class EstimateApp:
         self.refresh_table(True)
         self.open_popup(new_no)
 
-    def add_download_row(self):
-        new_no = get_next_no(self.data)
-        self.data.append(create_blank_item(new_no))
-        self.refresh_table(True)
-        self.open_popup(new_no, export_on_save=True)
-
-    def open_popup(self, no, export_on_save=False):
-        open_item_popup(self, no, export_on_save)
+    def open_popup(self, no):
+        open_item_popup(self, no)
 
     def open_next_item(self, no):
         next_no = no + 1
@@ -415,175 +468,58 @@ class EstimateApp:
         next_no = get_next_no(self.data)
         for offset, item in enumerate(cards):
             item["no"] = next_no + offset
-            item["excel_row"] = None
             item["save_pending"] = True
             self.data.append(item)
         self.save_session()
         self.refresh_table(True)
         messagebox.showinfo("업로드 완료",
-                            f"{len(cards)}개 항목을 카드로 불러왔습니다.\n저장하면 오늘 날짜 누적 파일에 추가됩니다.")
-
-    def save_to_excel(self):
-        if self.is_saving:
-            messagebox.showwarning("저장 진행 중", "이미 저장 중입니다. 잠시만 기다려 주세요.")
-            return
-        self.is_saving = True
-        try:
-            self._save_to_excel_impl()
-        finally:
-            self.is_saving = False
-
-    def _save_to_excel_impl(self):
-        save_items = [item for item in self.data
-                      if has_item_data(item) and (item.get("save_pending") or item.get("excel_row"))]
-        if not save_items:
-            messagebox.showwarning("저장 대상 없음", "입력된 항목이 없어 저장하지 않았습니다.")
-            return
-        try:
-            saved_count, output_path = excel_io.save_daily_accumulated(save_items, self.rates)
-        except excel_io.TemplateNotFound as exc:
-            messagebox.showerror("파일 오류", f"'{exc}' 파일이 존재하지 않습니다.")
-            return
-        except excel_io.SheetNotFound as exc:
-            messagebox.showerror("시트 오류", f"'{exc}' 시트를 찾을 수 없습니다.")
-            return
-        except OSError as exc:
-            messagebox.showerror("저장 오류", f"파일을 저장하지 못했습니다.\n{exc}")
-            return
-        for item in save_items:
-            item["source_file"] = os.path.basename(output_path)
-            item["source_month"] = os.path.basename(os.path.dirname(output_path))
-        self.save_session()
-        self.refresh_table(False)
-        messagebox.showinfo("누적 저장 완료",
-                            f"{saved_count}개 항목을 날짜별 파일에 누적 저장했습니다.\n\n{output_path}")
-
-    def choose_output_format(self, parent):
-        """엑셀/PDF/둘 다 선택 창. 고른 값('excel'/'pdf'/'both') 또는 취소 시 None."""
-        result = {"value": None}
-        c = self.theme.colors
-        dialog = tk.Toplevel(parent)
-        dialog.title("출력 형식 선택")
-        dialog.configure(bg=c["panel"])
-        dialog.transient(parent)
-        dialog.resizable(False, False)
-        ttk.Label(dialog, text="어떤 형식으로 저장할까요?", font=self.theme.bold,
-                 padding=(20, 18, 20, 4)).pack()
-        ttk.Label(dialog, text="PDF는 견적서 시트만 담기며, Microsoft Excel이 설치된 PC에서만 만들 수 있습니다.",
-                 style="Muted.TLabel", padding=(20, 0, 20, 12)).pack()
-
-        def pick(value):
-            result["value"] = value
-            dialog.destroy()
-
-        btns = ttk.Frame(dialog, padding=(20, 0, 20, 18))
-        btns.pack()
-        ttk.Button(btns, text="엑셀(.xlsx)", command=lambda: pick("excel")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="PDF", command=lambda: pick("pdf")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="엑셀 + PDF", command=lambda: pick("both")).pack(side=tk.LEFT, padx=4)
-        dialog.protocol("WM_DELETE_WINDOW", lambda: pick(None))
-        dialog.update_idletasks()
-        px = parent.winfo_rootx() + (parent.winfo_width() - dialog.winfo_width()) // 2
-        py = parent.winfo_rooty() + (parent.winfo_height() - dialog.winfo_height()) // 3
-        dialog.geometry(f"+{max(0, px)}+{max(0, py)}")
-        dialog.grab_set()
-        parent.wait_window(dialog)
-        return result["value"]
+                            f"{len(cards)}개 항목을 카드로 불러왔습니다.\n"
+                            f"방금 올린 항목이 목록 맨 위에 쌓입니다.")
 
     def export_items(self, items, default_name=None, parent=None):
+        """고른 항목을 엑셀 견적 파일로 내려받는다(v0.0.9: PDF 출력은 없앴다, 요청 3-1)."""
         if not items:
             messagebox.showwarning("다운로드 대상 없음", "다운로드할 항목을 먼저 선택하거나 입력하세요.", parent=parent)
             return False
         parent = parent or self.root
-        output_format = self.choose_output_format(parent)
-        if not output_format:
-            return False
 
         base_name = os.path.splitext(default_name or f"선택견적_{datetime.now():%Y-%m-%d}.xlsx")[0]
-        wants_pdf = output_format in ("pdf", "both")
-        primary_ext = ".pdf" if output_format == "pdf" else ".xlsx"
         chosen_path = filedialog.asksaveasfilename(
             parent=parent,
             title="다운로드 저장 위치 선택",
-            defaultextension=primary_ext,
-            initialfile=base_name + primary_ext,
-            filetypes=([("PDF files", "*.pdf")] if output_format == "pdf"
-                      else [("Excel files", "*.xlsx")]))
+            defaultextension=".xlsx",
+            initialfile=base_name + ".xlsx",
+            filetypes=[("Excel files", "*.xlsx")])
         if not chosen_path:
             return False
 
-        stem = os.path.splitext(chosen_path)[0]
-        xlsx_is_temp = output_format == "pdf"
-        pdf_path = chosen_path if output_format == "pdf" else (stem + ".pdf" if wants_pdf else None)
-
-        # 파일 대화상자는 사용자가 직접 입력한 이름(chosen_path)의 겹침만 확인해 준다.
-        # PDF 선택 시 자동으로 만들어지는 .xlsx, 엑셀+PDF 선택 시 자동으로 만들어지는 .pdf처럼
-        # 화면에 안 보이는 파일을 조용히 덮어썼다가(PDF 전용이면 지우기까지) 사용자의 기존
-        # 견적 파일을 날릴 수 있어, 그 경로가 이미 있으면 별도로 물어본다.
-        if output_format == "both" and os.path.exists(pdf_path):
-            if not messagebox.askyesno(
-                    "덮어쓰기 확인",
-                    f"'{os.path.basename(pdf_path)}' 파일이 이미 있습니다. 덮어쓸까요?", parent=parent):
-                return False
-
-        temp_dir = tempfile.mkdtemp(prefix="est_pdf_") if xlsx_is_temp else None
-        xlsx_path = (os.path.join(temp_dir, os.path.basename(stem) + ".xlsx")
-                    if xlsx_is_temp else chosen_path)
         try:
-            try:
-                saved_count = excel_io.export_items(items, self.rates, xlsx_path)
-            except excel_io.TemplateNotFound as exc:
-                messagebox.showerror("파일 오류", f"'{exc}' 파일이 존재하지 않습니다.", parent=parent)
-                return False
-            except excel_io.SheetNotFound as exc:
-                messagebox.showerror("시트 오류", f"'{exc}' 시트를 찾을 수 없습니다.", parent=parent)
-                return False
-            except OSError as exc:
-                messagebox.showerror("저장 오류", f"파일을 저장하지 못했습니다.\n{exc}", parent=parent)
-                return False
-
-            saved_paths = [] if xlsx_is_temp else [xlsx_path]
-            if wants_pdf:
-                pdf_ok, pdf_error = pdf_export.convert_to_pdf(xlsx_path, pdf_path, excel_io.ESTIMATE_SHEET_NAME)
-                if pdf_ok:
-                    saved_paths.append(pdf_path)
-                elif xlsx_is_temp:
-                    # "PDF"만 선택했는데 실패하면 임시 폴더의 xlsx가 finally에서 통째로
-                    # 지워져 사용자에게 아무 결과물도 남지 않는다(요청: "pdf 출력 에러
-                    # 출력이 안됨" -- 실사용에서 가장 아픈 지점). 최소한 엑셀로라도 건진다.
-                    if messagebox.askyesno(
-                            "PDF 생성 실패",
-                            f"PDF로 만들지 못했습니다.\n{pdf_error}\n\n대신 엑셀 파일로 저장할까요?",
-                            parent=parent):
-                        fallback_path = filedialog.asksaveasfilename(
-                            parent=parent, title="엑셀로 저장할 위치 선택",
-                            defaultextension=".xlsx", initialfile=os.path.basename(stem) + ".xlsx",
-                            filetypes=[("Excel files", "*.xlsx")])
-                        if fallback_path:
-                            try:
-                                shutil.copy2(xlsx_path, fallback_path)
-                                saved_paths.append(fallback_path)
-                            except OSError as exc:
-                                messagebox.showerror(
-                                    "저장 오류", f"엑셀 파일을 저장하지 못했습니다.\n{exc}", parent=parent)
-                else:
-                    messagebox.showwarning(
-                        "PDF 생성 안내",
-                        f"PDF로 만들지 못했습니다.\n{pdf_error}\n\n엑셀 파일은 정상 저장되었습니다.",
-                        parent=parent)
-        finally:
-            if temp_dir:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-
-        if not saved_paths:
+            saved_count = excel_io.export_items(items, self.rates, chosen_path, self.settings)
+        except excel_io.TemplateNotFound as exc:
+            messagebox.showerror("파일 오류", f"'{exc}' 파일이 존재하지 않습니다.", parent=parent)
             return False
+        except excel_io.SheetNotFound as exc:
+            messagebox.showerror("시트 오류", f"'{exc}' 시트를 찾을 수 없습니다.", parent=parent)
+            return False
+        except OSError as exc:
+            messagebox.showerror("저장 오류", f"파일을 저장하지 못했습니다.\n{exc}", parent=parent)
+            return False
+
+        # v0.0.9: 날짜별 누적 저장을 없애면서 저장 완료 표시를 여기로 옮겼다.
+        # 안 그러면 NEW 배지를 지워 줄 곳이 없어 모든 카드에 영원히 붙어 있게 된다.
+        for item in items:
+            item["save_pending"] = False
+        self.save_session()
+        self.refresh_table(False)
         messagebox.showinfo("다운로드 완료",
-                            f"{saved_count}개 항목을 저장했습니다.\n\n" + "\n".join(saved_paths),
+                            f"{saved_count}개 항목을 저장했습니다.\n\n{chosen_path}",
                             parent=parent)
         return True
 
     def export_selected_items(self):
-        selected_items = [item for item in self.data
+        # 화면에 보이는 차례 그대로 엑셀에 담는다(맨 위 카드가 엑셀에서도 첫 줄).
+        _, visible_items = filter_items(self.data, self.get_search_text())
+        selected_items = [item for item in visible_items
                           if has_item_data(item) and item["no"] in self.selected_nos]
         self.export_items(selected_items,
                           default_name=f"선택견적_{datetime.now():%Y-%m-%d}.xlsx",

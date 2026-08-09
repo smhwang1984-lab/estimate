@@ -19,10 +19,11 @@ def get_session_path():
     return paths.get_user_file(SESSION_FILE)
 
 
-def save(items, rates, selected_nos, search_text):
+def save(items, selected_nos, search_text):
+    # v0.0.9: 단가(rates)는 여기에 담지 않는다. 설정창(core/settings.py)이 단가의 유일한
+    # 주인인데, 세션에도 담아 두면 프로그램을 켤 때 옛 세션 값이 새 설정을 덮어써 버린다.
     payload = {
         "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "rates": rates,
         "selected_nos": sorted(selected_nos),
         "search": search_text,
         "items": [item for item in items if has_item_data(item)],
@@ -51,7 +52,6 @@ def load():
         items.append(item)
     return {
         "items": items,
-        "rates": payload.get("rates", {}),
         "selected_nos": set(payload.get("selected_nos", [])),
         "search": payload.get("search", ""),
         "saved_at": payload.get("saved_at"),

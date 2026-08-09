@@ -1,8 +1,16 @@
-"""카드를 눌렀을 때 뜨는 상세 입력 팝업창."""
+"""카드를 열었을 때 뜨는 상세 입력 팝업창.
+
+v0.0.9 변경점
+    - Comment를 여러 줄로 적을 수 있게 바꾸고(요청 5-1), 아래 손잡이를 끌어 높이를 늘린다.
+    - Material은 설정창 목록에서 고르고(요청 6-3), `열처리`를 체크하면 그 아래에
+      HRC Min/Max 입력칸이 살아난다(요청 5-2, 5-3).
+    - 공정 단가는 더 이상 여기서 못 고친다. 설정창 값이 그대로 쓰인다(요청 6-2).
+    - 정보 타일에서 기계 시트 폴더/파일과 엑셀 행을 뺐다(요청 4-3, 4-4).
+      NO는 엑셀 행이 아니라 현황판에 보이는 순번이다(요청 4-5).
+"""
 
 import re
 import tkinter as tk
-from datetime import datetime
 from tkinter import messagebox, ttk
 
 from ..core import config
@@ -13,9 +21,12 @@ SHAPE_BLOCK = "블록"
 SHAPE_ROD = "로드"
 SHAPE_CUSTOM = "직접입력"
 
+COMMENT_MIN_LINES = 2
+COMMENT_MAX_LINES = 20
+
 
 def build_info_panel(app, parent, item):
-    """팝업 상단에 항목 정보 전체를 펼쳐 놓는다. 금액 3종은 입력에 따라 실시간으로 바뀐다."""
+    """팝업 상단에 항목 정보를 펼쳐 놓는다. 금액 3종은 입력에 따라 실시간으로 바뀐다."""
     info_box = ttk.LabelFrame(parent, text="항목 정보", padding=10)
     info_box.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
     sum_time, unit_price, final_price = calc_row(item, app.rates)
@@ -25,12 +36,9 @@ def build_info_panel(app, parent, item):
         "final_price": tk.StringVar(value=f"{final_price:,} 원"),
     }
     static_facts = [
-        ("NO", str(item["no"])),
+        ("NO", str(app.get_display_no(item["no"]))),
         ("작성일", item["created_at"]),
         ("저장 상태", "저장 대기" if item.get("save_pending") else "저장 완료"),
-        ("기계 시트 폴더", item["source_month"] or "신규"),
-        ("기계 시트 파일", item["source_file"] or "저장 대기"),
-        ("엑셀 행", str(item["excel_row"]) if item.get("excel_row") else "-"),
     ]
     live_facts = [
         ("시간합계", summary_vars["sum_time"]),
@@ -50,6 +58,88 @@ def build_info_panel(app, parent, item):
         ttk.Label(tile, text=label, style="Muted.TLabel").pack(anchor="w")
         ttk.Label(tile, textvariable=var, style="Value.TLabel").pack(anchor="w", pady=(2, 0))
     return summary_vars
+
+
+def _build_material_section(app, parent, item):
+    """Material 선택과 열처리 경도 입력. (소재 변수, 열처리 변수, Min, Max)를 돌려준다."""
+    box = ttk.LabelFrame(parent, text="Material (소재) 입력", padding=10)
+    box.pack(fill=tk.X, pady=(0, 10))
+    box.columnconfigure(1, weight=1)
+
+    material_var = tk.StringVar(value=item.get("material", ""))
+    ttk.Label(box, text="Material").grid(row=0, column=0, sticky="e", padx=6, pady=6)
+    # 목록에서 고르되 목록에 없는 소재는 직접 적을 수 있게 readonly로 잠그지 않는다.
+    ttk.Combobox(box, textvariable=material_var, values=list(app.settings["materials"]),
+                 width=30).grid(row=0, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
+
+    heat_var = tk.BooleanVar(value=bool(item.get("heat_treat")))
+    hrc_min_var = tk.StringVar(value=str(item.get("hrc_min", "")))
+    hrc_max_var = tk.StringVar(value=str(item.get("hrc_max", "")))
+
+    heat_check = ttk.Checkbutton(box, text="열처리", variable=heat_var)
+    heat_check.grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(4, 0))
+
+    # 열처리를 체크했을 때만 보이는 줄. 요청대로 체크박스 "아래에" 붙인다.
+    hrc_row = ttk.Frame(box)
+    hrc_row.grid(row=2, column=0, columnspan=4, sticky="w", padx=6, pady=(2, 2))
+    ttk.Label(hrc_row, text="HRC").pack(side=tk.LEFT, padx=(6, 6))
+    min_entry = ttk.Entry(hrc_row, textvariable=hrc_min_var, width=6)
+    min_entry.pack(side=tk.LEFT)
+    ttk.Label(hrc_row, text="~").pack(side=tk.LEFT, padx=6)
+    max_entry = ttk.Entry(hrc_row, textvariable=hrc_max_var, width=6)
+    max_entry.pack(side=tk.LEFT)
+    ttk.Label(hrc_row, text="Min / Max 경도", style="Muted.TLabel").pack(side=tk.LEFT, padx=(10, 0))
+
+    def sync_hrc_state(*args):
+        state = "normal" if heat_var.get() else "disabled"
+        min_entry.configure(state=state)
+        max_entry.configure(state=state)
+
+    heat_var.trace_add("write", sync_hrc_state)
+    sync_hrc_state()
+    return material_var, heat_var, hrc_min_var, hrc_max_var
+
+
+def _build_comment_section(app, parent, item):
+    """여러 줄 Comment 입력칸. 아래 손잡이를 끌어 높이를 직접 늘릴 수 있다(요청 5-1)."""
+    c = app.theme.colors
+    box = ttk.LabelFrame(parent, text="Comment", padding=10)
+    box.pack(fill=tk.X, pady=(0, 10))
+
+    holder = tk.Frame(box, bg=c["panel"])
+    holder.pack(fill=tk.X)
+    scrollbar = ttk.Scrollbar(holder, orient=tk.VERTICAL)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    text = tk.Text(holder, height=2, wrap="word", bg=c["card_alt"], fg=c["text"],
+                   insertbackground=c["text"], highlightthickness=1,
+                   highlightbackground=c["line"], relief="flat",
+                   font=(app.theme.family, app.theme.fonts["normal_size"]))
+    text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    text.configure(yscrollcommand=scrollbar.set)
+    scrollbar.configure(command=text.yview)
+    text.insert("1.0", item.get("comment", ""))
+
+    # 손잡이. 위아래로 끌면 줄 수가 바뀐다. Tk의 Text는 픽셀이 아니라 줄 수로 높이를 잡으므로
+    # 끌어 옮긴 픽셀을 한 줄 높이로 나눠 줄 수로 환산한다.
+    grip = tk.Frame(box, height=7, bg=c["line"], cursor="sb_v_double_arrow")
+    grip.pack(fill=tk.X, pady=(4, 0))
+    drag_state = {"y": 0, "lines": COMMENT_MIN_LINES}
+
+    def start_drag(event):
+        drag_state["y"] = event.y_root
+        drag_state["lines"] = int(text.cget("height"))
+
+    def on_drag(event):
+        line_height = max(1, text.winfo_height() // max(1, int(text.cget("height"))))
+        delta_lines = (event.y_root - drag_state["y"]) // line_height
+        new_lines = max(COMMENT_MIN_LINES, min(COMMENT_MAX_LINES, drag_state["lines"] + delta_lines))
+        text.configure(height=new_lines)
+
+    grip.bind("<Button-1>", start_drag)
+    grip.bind("<B1-Motion>", on_drag)
+    ttk.Label(box, text="회색 손잡이를 끌면 입력칸이 커집니다.",
+              style="Muted.TLabel").pack(anchor="w", pady=(6, 0))
+    return text
 
 
 def _build_size_section(parent, item):
@@ -148,7 +238,7 @@ def _build_size_section(parent, item):
     return final_size_var
 
 
-def open_item_popup(app, no, export_on_save=False):
+def open_item_popup(app, no):
     item = next((row for row in app.data if row["no"] == no), None)
     if not item:
         return
@@ -161,22 +251,29 @@ def open_item_popup(app, no, export_on_save=False):
 
     popup = tk.Toplevel(app.root)
     app.open_popups[no] = popup
-    popup.title(f"[NO. {no}] 기계 시트 항목 입력")
+    popup.title(f"[NO. {app.get_display_no(no)}] 견적 항목 입력")
     # 화면 배율이 커도 팝업이 화면 밖으로 넘치지 않도록 표시 영역에 맞춰 크기를 정한다.
-    width = min(1180, max(900, popup.winfo_screenwidth() - 80))
-    height = min(800, max(600, popup.winfo_screenheight() - 120))
+    # v0.0.9: Material·열처리·여러 줄 Comment가 들어오면서 세로가 길어져, 예전 상한(1180x860)
+    # 으로는 하단 저장 버튼과 오른쪽 단가·금액 칸이 잘렸다. 화면이 허락하는 만큼 키운다.
+    width = min(1360, max(960, popup.winfo_screenwidth() - 80))
+    height = min(1240, max(680, popup.winfo_screenheight() - 90))
     pos_x = max(0, (popup.winfo_screenwidth() - width) // 2)
-    pos_y = max(0, (popup.winfo_screenheight() - height) // 3)
+    pos_y = max(0, (popup.winfo_screenheight() - height) // 6)
     popup.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
-    popup.minsize(min(900, width), min(600, height))
+    popup.minsize(min(960, width), min(680, height))
     popup.configure(bg=app.theme.color("bg"))
     popup.grab_set()
     popup.bind("<Destroy>", lambda event, card_no=no: app.open_popups.pop(card_no, None) if event.widget is popup else None)
 
     frame = ttk.Frame(popup, padding=16)
     frame.pack(fill=tk.BOTH, expand=True)
-    frame.columnconfigure(0, weight=3)
-    frame.columnconfigure(1, weight=2)
+    # 오른쪽(공정별 시간)은 숫자 네 칸이 다 보여야 하므로 최소 폭을 고정으로 확보하고,
+    # 남는 폭은 왼쪽(기본 정보/소재/Comment/Size)이 가져간다. 비율(weight)로만 나누면
+    # 왼쪽 입력칸들의 요구 폭이 커서 오른쪽이 눌리고 금액 칸이 잘렸다.
+    frame.columnconfigure(0, weight=1, minsize=520)
+    frame.columnconfigure(1, weight=0, minsize=440)
+    # 입력 영역만 늘어나고 맨 아래 저장 버튼 줄은 창이 작아도 항상 보이게 한다.
+    frame.rowconfigure(1, weight=1)
 
     summary_vars = build_info_panel(app, frame, item)
 
@@ -193,7 +290,6 @@ def open_item_popup(app, no, export_on_save=False):
         ("품번 *", "part_no", 0, 0),
         ("품명 *", "part_name", 0, 2),
         ("기종", "model", 1, 0),
-        ("Material", "material", 1, 2),
     ]
     for label, key, row, col in text_rows:
         ttk.Label(info, text=label).grid(row=row, column=col, sticky="e", padx=6, pady=6)
@@ -201,28 +297,27 @@ def open_item_popup(app, no, export_on_save=False):
         ttk.Entry(info, textvariable=fields[key], width=18).grid(
             row=row, column=col + 1, sticky="ew", padx=6, pady=6)
 
-    ttk.Label(info, text="수량(Qty)").grid(row=2, column=0, sticky="e", padx=6, pady=6)
+    ttk.Label(info, text="수량(Qty)").grid(row=1, column=2, sticky="e", padx=6, pady=6)
     fields["qty"] = tk.StringVar(value=str(item["qty"]))
-    ttk.Entry(info, textvariable=fields["qty"], width=18).grid(row=2, column=1, sticky="ew", padx=6, pady=6)
+    ttk.Entry(info, textvariable=fields["qty"], width=18).grid(row=1, column=3, sticky="ew", padx=6, pady=6)
 
-    ttk.Label(info, text="가능여부").grid(row=2, column=2, sticky="e", padx=6, pady=6)
+    ttk.Label(info, text="가능여부").grid(row=2, column=0, sticky="e", padx=6, pady=6)
     fields["possible"] = tk.StringVar(value=item["possible"])
     ttk.Combobox(info, textvariable=fields["possible"], values=["가능", "불가", "검토필요"],
-                 state="readonly", width=15).grid(row=2, column=3, sticky="w", padx=6, pady=6)
+                 state="readonly", width=15).grid(row=2, column=1, sticky="w", padx=6, pady=6)
 
-    ttk.Label(info, text="Comment").grid(row=3, column=0, sticky="e", padx=6, pady=6)
-    fields["comment"] = tk.StringVar(value=item["comment"])
-    ttk.Entry(info, textvariable=fields["comment"], width=18).grid(
-        row=3, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
-
+    material_var, heat_var, hrc_min_var, hrc_max_var = _build_material_section(app, left, item)
+    comment_text = _build_comment_section(app, left, item)
     final_size_var = _build_size_section(left, item)
 
     machine_fields = config.get_machine_fields()
-    times = ttk.LabelFrame(frame, text="각 공정별 시간 / 단가 입력", padding=10)
+    times = ttk.LabelFrame(frame, text="각 공정별 시간 입력", padding=10)
     times.grid(row=1, column=1, sticky="nsew")
+    # 시간/단가/금액 칸에 최소 폭을 준다. 안 주면 공정 이름 열이 남는 폭을 다 가져가
+    # 오른쪽 숫자가 '70,0…'처럼 잘린다.
+    times.columnconfigure(0, weight=0, minsize=90)
     for col in (1, 2, 3):
-        times.columnconfigure(col, weight=1)
-    rate_fields = {}
+        times.columnconfigure(col, weight=1, minsize=86)
     amount_vars = {}
     for col, header in enumerate(["공정", "시간(h)", "단가(원)", "금액(원)"]):
         ttk.Label(times, text=header, style="Head.TLabel", padding=(6, 4)).grid(
@@ -233,24 +328,26 @@ def open_item_popup(app, no, export_on_save=False):
         fields[key] = tk.StringVar(value=(str(item[key]) if item[key] > 0 else ""))
         ttk.Entry(times, textvariable=fields[key], width=10).grid(
             row=row_index, column=1, sticky="ew", padx=4, pady=4)
-        rate_fields[key] = tk.StringVar(value=str(int(app.rates[key])))
-        ttk.Entry(times, textvariable=rate_fields[key], width=10).grid(
+        # v0.0.9: 단가는 설정창에서만 고친다. 여기서는 읽기 전용으로 보여 주기만 한다.
+        ttk.Label(times, text=f"{int(app.rates[key]):,}", anchor="e").grid(
             row=row_index, column=2, sticky="ew", padx=4, pady=4)
         amount_vars[key] = tk.StringVar(value="0")
         ttk.Label(times, textvariable=amount_vars[key], style="Value.TLabel", anchor="e").grid(
             row=row_index, column=3, sticky="ew", padx=4, pady=4)
-    ttk.Label(times, text="단가는 견적 양식 5행에 공통 적용됩니다.", style="Muted.TLabel").grid(
+    # wraplength를 주지 않으면 이 한 줄이 오른쪽 영역 전체 폭을 밀어내 왼쪽 입력칸이 눌린다.
+    ttk.Label(times, text="단가는 설정창에서 정한 값이 모든 카드에 적용됩니다.",
+              style="Muted.TLabel", wraplength=340, justify="left").grid(
         row=len(machine_fields) + 1, column=0, columnspan=4, sticky="w", padx=6, pady=(8, 0))
 
     def update_amounts(*args):
         sum_time, cost_sum, has_error = 0.0, 0.0, False
         for key, _ in machine_fields:
             hours = parse_number(fields[key].get())
-            rate = parse_number(rate_fields[key].get())
-            if hours is None or rate is None or hours < 0 or rate < 0:
+            if hours is None or hours < 0:
                 amount_vars[key].set("입력오류")
                 has_error = True
                 continue
+            rate = app.rates[key]
             amount_vars[key].set(f"{int(hours * rate):,}")
             sum_time += hours
             cost_sum += hours * rate
@@ -264,22 +361,34 @@ def open_item_popup(app, no, export_on_save=False):
 
     for key, _ in machine_fields:
         fields[key].trace_add("write", update_amounts)
-        rate_fields[key].trace_add("write", update_amounts)
     fields["qty"].trace_add("write", update_amounts)
     update_amounts()
 
-    # ESC로 닫기(요청: "카드 로드 후 닫기 별도 없이 esc 누르면 닫힘"). 값을 바꾼 채로
-    # 실수로 누르면 공수 시간 입력이 통째로 날아갈 수 있어, 스냅샷과 달라졌을 때만 확인한다.
+    def read_comment():
+        return comment_text.get("1.0", "end-1c")
+
+    # ESC로 닫기. 값을 바꾼 채로 실수로 누르면 입력이 통째로 날아갈 수 있어,
+    # 열 때 찍어 둔 스냅샷과 달라졌을 때만 확인한다.
+    # Comment는 tk.Text라 StringVar가 없어 따로 챙긴다.
     initial_snapshot = {key: var.get() for key, var in fields.items()}
-    initial_snapshot.update({f"rate:{key}": var.get() for key, var in rate_fields.items()})
     initial_snapshot["_size"] = final_size_var.get()
+    initial_snapshot["_comment"] = read_comment()
+    initial_snapshot["_material"] = material_var.get()
+    initial_snapshot["_heat"] = heat_var.get()
+    initial_snapshot["_hrc"] = (hrc_min_var.get(), hrc_max_var.get())
 
     def has_unsaved_changes():
         if final_size_var.get() != initial_snapshot["_size"]:
             return True
-        if any(var.get() != initial_snapshot[key] for key, var in fields.items()):
+        if read_comment() != initial_snapshot["_comment"]:
             return True
-        return any(var.get() != initial_snapshot[f"rate:{key}"] for key, var in rate_fields.items())
+        if material_var.get() != initial_snapshot["_material"]:
+            return True
+        if heat_var.get() != initial_snapshot["_heat"]:
+            return True
+        if (hrc_min_var.get(), hrc_max_var.get()) != initial_snapshot["_hrc"]:
+            return True
+        return any(var.get() != initial_snapshot[key] for key, var in fields.items())
 
     def close_on_escape(event=None):
         if has_unsaved_changes() and not messagebox.askyesno(
@@ -300,7 +409,7 @@ def open_item_popup(app, no, export_on_save=False):
         except ValueError:
             messagebox.showerror("입력 오류", "수량(Qty)은 1 이상의 정수로 입력하셔야 합니다.", parent=popup)
             return
-        mach_values, rate_values = {}, {}
+        mach_values = {}
         for key, label in machine_fields:
             value = fields[key].get().strip()
             try:
@@ -308,43 +417,31 @@ def open_item_popup(app, no, export_on_save=False):
             except ValueError:
                 messagebox.showerror("입력 오류", "공수 시간은 숫자로 입력해 주세요 (예: 1.5).", parent=popup)
                 return
-            rate_text = rate_fields[key].get().strip().replace(",", "")
-            try:
-                rate_value = float(rate_text) if rate_text else 0.0
-            except ValueError:
-                messagebox.showerror("입력 오류", f"'{label}' 단가는 숫자로 입력해 주세요.", parent=popup)
-                return
-            if rate_value < 0:
-                messagebox.showerror("입력 오류", f"'{label}' 단가는 0 이상으로 입력해 주세요.", parent=popup)
-                return
-            rate_values[key] = rate_value
+        hrc_min = hrc_min_var.get().strip()
+        hrc_max = hrc_max_var.get().strip()
+        if heat_var.get():
+            for text in (hrc_min, hrc_max):
+                if text and parse_number(text) is None:
+                    messagebox.showerror("입력 오류", "HRC 경도는 숫자로 입력해 주세요 (예: 58).", parent=popup)
+                    return
 
         item["part_no"] = fields["part_no"].get().strip()
         item["part_name"] = fields["part_name"].get().strip()
         item["model"] = fields["model"].get().strip()
-        item["material"] = fields["material"].get().strip()
+        item["material"] = material_var.get().strip()
+        item["heat_treat"] = bool(heat_var.get())
+        item["hrc_min"] = hrc_min if heat_var.get() else ""
+        item["hrc_max"] = hrc_max if heat_var.get() else ""
         item["size"] = final_size_var.get().strip()
-        item["comment"] = fields["comment"].get().strip()
+        item["comment"] = read_comment().strip()
         item["possible"] = fields["possible"].get().strip()
         item["qty"] = qty_value
         item["save_pending"] = True
         item.update(mach_values)
-        app.rates.update(rate_values)
 
-        if export_on_save:
-            if not app.export_items([item], default_name=f"신규견적_{datetime.now():%Y-%m-%d}.xlsx", parent=popup):
-                return
         app.save_session()
         app.refresh_table(True)
         popup.destroy()
-
-        if export_on_save and not messagebox.askyesno(
-                "신규 입력 반영", "방금 다운로드한 신규 항목을 현재 카드 목록에도 유지하시겠습니까?", parent=app.root):
-            app.data = [row for row in app.data if row["no"] != no]
-            app.selected_nos.discard(no)
-            app.save_session()
-            app.refresh_table(True)
-            return
         if next_item:
             app.open_next_item(no)
 

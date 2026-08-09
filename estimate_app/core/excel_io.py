@@ -14,15 +14,16 @@ v0.0.7부터 열 위치를 코드에 고정하지 않는다. `resolve_columns()`
 """
 
 import os
+import re
 from copy import copy
 from datetime import datetime
 
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter, range_boundaries
 
-from . import paths
+from . import paths, settings as settings_store
 from .config import MACHINE_KEYS
-from .model import create_blank_item, safe_float, safe_int
+from .model import create_blank_item, material_text, safe_float, safe_int
 
 SHEET_NAME = "기계"
 ESTIMATE_SHEET_NAME = "견적서"
@@ -34,6 +35,39 @@ RATE_ROW = 5
 ES_FIRST_ROW = 15
 ES_ROW_OFFSET = ES_FIRST_ROW - FIRST_DATA_ROW  # 견적서 행 - 기계 행
 ES_COLS = {"no": 2, "part_no": 3, "part_name": 5, "final_price": 7}  # 견적서 자체 열은 항상 고정
+
+# 기계 시트 푸터(회사명 / 날짜 / 작성자)는 합계 행 바로 아래에 붙어 있고, 데이터 행이 늘면
+# 합계 행과 함께 통째로 밀려 내려간다(직접 확인: 7건 Q17~19, 20건 Q30~32, 45건 Q55~57).
+# 그래서 절대 행 번호가 아니라 합계 행 기준 상대 위치로 찾는다.
+FOOTER_COL = 17                  # Q열
+FOOTER_COMPANY_OFFSET = 3        # 합계행 +3: 회사명
+FOOTER_DATE_OFFSET = 4           # 합계행 +4: 발행 날짜(yyyy-mm-dd)
+FOOTER_WRITER_OFFSET = 5         # 합계행 +5: 직위 + 작성자
+
+# v0.0.9: 단가/최종단가 열이 좁아 금액이 `####`으로 나오던 것을 넓힌다(요청 3-3).
+# 회계 서식(`_-* #,##0_-;...`)은 숫자 좌우에 여백까지 잡아먹어 기본 폭으로는 백만 단위부터 잘린다.
+# 서식 자체는 손대지 않는다 -- 보이게만 하면 되는 요청이다.
+PRICE_COL_WIDTH = 15
+
+# 견적서 시트 왼쪽 위(받는 업체) / 오른쪽 위(우리 쪽 연락처) 칸 위치와 문구 틀.
+# 설정창에는 알맹이만 입력받고, 양식 문구는 여기서 조립한다.
+ES_CLIENT_CELLS = [
+    ("B4", "{value} 귀중", "name"),
+    ("B5", "  담당자 : {value}", "manager"),
+    ("B6", "  부   서 : {value}", "dept"),
+    ("B8", "  사업명 : {value}", "project"),
+]
+ES_SUPPLIER_CELLS = [
+    ("F5", "대표자 : {value}    (인)", "ceo"),
+    ("F6", "사업자등록번호 : {value}", "biz_no"),
+    ("F7", "주소 : {value}", "address"),
+    ("F8", "전화번호 : {value}", "phone"),
+    ("F9", "담당자 : {value}", "contact"),
+]
+ES_DATE_CELL = "B7"  # 기계 시트 푸터의 날짜를 참조한다(=기계!Q##).
+
+# Material 칸에 붙여 둔 경도 표기를 되읽기 위한 규칙. `HRC58~62`, `HRC 58 ~ 62`, `HRC58` 모두 받는다.
+HRC_PATTERN = re.compile(r"\s*HRC\s*([\d.]+)?\s*(?:~|-)?\s*([\d.]+)?\s*$", re.IGNORECASE)
 
 # 헤더 문구가 살짝 달라도(구버전 양식 등) 찾아내기 위한 부분 일치 키워드.
 # 앞쪽 항목이 우선한다 -- '프로그램 및치구'처럼 한 칸에 합쳐진 헤더는 먼저 매칭되는
@@ -76,14 +110,6 @@ def get_template_path():
     if not os.path.exists(path):
         raise TemplateNotFound(path)
     return path
-
-
-def get_dated_output_path(create_dir=True):
-    today = datetime.now()
-    output_dir = os.path.join(paths.get_estimate_root_dir(), f"{today.year}년도", f"{today.month:02d}월")
-    if create_dir:
-        os.makedirs(output_dir, exist_ok=True)
-    return os.path.join(output_dir, f"견적누적_{today:%Y-%m-%d}.xlsx")
 
 
 def _get_sheet(wb, name):
@@ -380,6 +406,28 @@ def sync_estimate_sheet(es, gigye_ws, gigye_cols, gigye_summary_row):
 
 # ---------- 읽기 ----------
 
+def split_material(text):
+    """Material 칸 문자열을 (소재, 열처리여부, HRC Min, HRC Max)로 나눈다.
+
+    저장할 때 붙인 `HRC58~62`를 그대로 다시 카드로 되돌리기 위한 것이다.
+    경도 표기가 없으면 소재만 돌려주고 열처리는 꺼진 상태가 된다.
+    """
+    text = str(text or "").strip()
+    if not text:
+        return "", False, "", ""
+    match = HRC_PATTERN.search(text)
+    if not match:
+        return text, False, "", ""
+    low, high = match.group(1) or "", match.group(2) or ""
+    if not low and not high:
+        # `HRC`만 적혀 있는 경우. 열처리는 켜 두되 값은 비운다.
+        return text[:match.start()].strip(), True, "", ""
+    if not high:
+        # `HRC58` 한쪽만 적힌 경우는 Min으로 본다.
+        return text[:match.start()].strip(), True, low, ""
+    return text[:match.start()].strip(), True, low, high
+
+
 def read_cards_from_workbook(file_path):
     """업로드한 기계 시트에서 입력된 행만 카드로 읽어 온다."""
     wb = _openpyxl().load_workbook(file_path, data_only=False)
@@ -400,8 +448,6 @@ def read_cards_from_workbook(file_path):
         item["source_file"] = os.path.basename(abs_path)
         item["source_month"] = source_month
         item["save_pending"] = True
-        item["excel_row"] = None
-        item["excel_file"] = None
         item["model"] = str(ws.cell(row=row, column=cols["model"]).value or "") if cols["model"] else ""
         item["part_no"] = str(ws.cell(row=row, column=cols["part_no"]).value or "") if cols["part_no"] else ""
         item["part_name"] = (str(ws.cell(row=row, column=cols["part_name"]).value or "")
@@ -410,8 +456,9 @@ def read_cards_from_workbook(file_path):
         item["possible"] = (str(ws.cell(row=row, column=cols["possible"]).value or "가능")
                             if cols["possible"] else "가능")
         item["qty"] = safe_int(ws.cell(row=row, column=cols["qty"]).value, 1) if cols["qty"] else 1
-        item["material"] = (str(ws.cell(row=row, column=cols["material"]).value or "")
-                            if cols["material"] else "")
+        raw_material = (str(ws.cell(row=row, column=cols["material"]).value or "")
+                        if cols["material"] else "")
+        item["material"], item["heat_treat"], item["hrc_min"], item["hrc_max"] = split_material(raw_material)
         if cols["size"] and size_span:
             size_parts = [ws.cell(row=row, column=cols["size"] + i).value for i in range(size_span)]
             item["size"] = " x ".join(str(v) for v in size_parts if v not in (None, ""))
@@ -447,7 +494,9 @@ def _write_item_values(ws, row, item, cols):
     if cols["qty"]:
         set_cell(cols["qty"], item["qty"])
     if cols["material"]:
-        set_cell(cols["material"], text_or_none(item["material"]))
+        # 열처리를 체크한 항목은 `SUS304 HRC58~62`처럼 경도를 붙여 적는다(요청 5-2, 5-3).
+        # 기계 시트에 열처리 전용 열이 없어 Material 칸에 함께 담는다.
+        set_cell(cols["material"], text_or_none(material_text(item)))
     if cols["size"]:
         set_cell(cols["size"], text_or_none(item["size"]))
     for key, col in cols["machine"].items():
@@ -457,13 +506,12 @@ def _write_item_values(ws, row, item, cols):
         set_cell(col, value if value > 0 else None)
 
 
-def write_items_to_sheet(ws, items, rates, update_item_rows, target_file):
-    """카드 목록을 시트에 채워 넣는다.
+def write_items_to_sheet(ws, items, rates):
+    """빈 양식의 기계 시트에 카드 목록을 위에서부터 차례로 채워 넣는다.
 
-    update_item_rows=True 면 각 카드가 어느 파일의 몇 행에 들어갔는지 기억해 두고
-    저장 완료로 표시한다(날짜별 누적 저장). 다른 파일에서 넘어온 excel_row는
-    이 파일 기준으로는 무효라 새 자리를 새로 배정한다(날짜가 바뀌면 파일도 바뀌므로).
-    False 면 카드를 건드리지 않는다(선택 다운로드).
+    v0.0.9에서 날짜별 누적 저장을 없애면서(요청 4-2) 출력은 항상 빈 양식에서 시작한다.
+    그래서 예전처럼 "이 카드가 지난번에 몇 행에 들어갔는지" 기억했다가 그 자리를 다시 쓰는
+    로직은 필요 없어졌다 -- 카드 순서 그대로 위에서부터 채운다.
     """
     cols = resolve_columns(ws)
 
@@ -472,60 +520,28 @@ def write_items_to_sheet(ws, items, rates, update_item_rows, target_file):
             ws.cell(row=RATE_ROW, column=col, value=rates[key])
 
     summary_row = find_summary_row(ws, cols)
-
-    def existing_row(item):
-        if not update_item_rows:
-            return None
-        row = item.get("excel_row")
-        if not row or not (FIRST_DATA_ROW <= row < summary_row):
-            return None
-        if item.get("excel_file") == target_file:
-            return row
-        if item.get("excel_file") is not None:
-            return None  # 다른 파일에서 넘어온 행 번호는 이 파일 기준으로 무효.
-        # v0.0.6 이전 세션에는 excel_file이 없었다. 오늘 이어 쓰는 바로 그 파일이 맞는지
-        # 그 행의 품번을 대조해 확인한 뒤에만 재사용한다(값이 실제로 일치할 때만 허용해야
-        # 엉뚱한 파일의 행 번호를 그대로 써서 다른 항목을 덮어쓰는 일이 없다).
-        if not cols["part_no"]:
-            return None
-        cell_value = ws.cell(row=row, column=cols["part_no"]).value
-        if cell_value and str(cell_value).strip() == (item.get("part_no") or "").strip():
-            return row
-        return None
-
-    reserved = {existing_row(item) for item in items if existing_row(item)}
     free_rows = [row for row in range(FIRST_DATA_ROW, summary_row)
-                if row not in reserved and not row_has_input_data(ws, row, cols)]
+                if not row_has_input_data(ws, row, cols)]
 
-    new_item_count = sum(1 for item in items if existing_row(item) is None)
-    need_new = max(0, new_item_count - len(free_rows))
-
+    need_new = max(0, len(items) - len(free_rows))
     if need_new:
         capacity = summary_row - FIRST_DATA_ROW
         summary_row = layout_machine_sheet(ws, cols, capacity + need_new)
         free_rows = [row for row in range(FIRST_DATA_ROW, summary_row)
-                    if row not in reserved and not row_has_input_data(ws, row, cols)]
+                    if not row_has_input_data(ws, row, cols)]
     else:
         update_summary_formula(ws, cols, summary_row)
 
     saved_count = 0
     for item in items:
-        row = existing_row(item)
-        if row is None:
-            row = free_rows.pop(0)
-        if update_item_rows:
-            # 품번 대조로 재사용을 허락받은 구버전 세션 항목도 여기서 excel_file이
-            # 채워져야 다음 저장부터 정상적으로(대조 없이) 재사용된다.
-            item["excel_row"] = row
-            item["excel_file"] = target_file
+        row = free_rows.pop(0)
         copy_row_style(ws, FIRST_DATA_ROW, row, _max_used_col(cols))
         apply_row_formulas(ws, row, cols)
         merge_size_cell(ws, row, cols)
         _write_item_values(ws, row, item, cols)
-        if update_item_rows:
-            item["save_pending"] = False
         saved_count += 1
     update_summary_formula(ws, cols, summary_row)
+    widen_price_columns(ws, cols)
     return saved_count, summary_row, cols
 
 
@@ -534,27 +550,70 @@ def _sync_estimate_if_present(wb, gigye_ws, gigye_cols, gigye_summary_row):
         sync_estimate_sheet(wb[ESTIMATE_SHEET_NAME], gigye_ws, gigye_cols, gigye_summary_row)
 
 
-def save_daily_accumulated(items, rates):
-    """오늘 날짜 누적 파일에 이어 붙인다. (저장 건수, 파일 경로)를 돌려준다."""
-    template_path = get_template_path()
-    output_path = get_dated_output_path(True)
-    source_path = output_path if os.path.exists(output_path) else template_path
-    wb = _openpyxl().load_workbook(source_path)
-    ws = _get_sheet(wb, SHEET_NAME)
-    target_file = os.path.abspath(output_path)
-    saved_count, summary_row, cols = write_items_to_sheet(ws, items, rates, True, target_file)
-    _sync_estimate_if_present(wb, ws, cols, summary_row)
-    wb.save(output_path)
-    return saved_count, output_path
+# ---------- 설정값 반영 (회사/작성자/견적서 상단/날짜) ----------
+
+def write_machine_footer(ws, summary_row, config_values, today=None):
+    """기계 시트 푸터에 회사명·발행 날짜·작성자를 적고, 날짜가 들어간 행 번호를 돌려준다.
+
+    푸터는 합계 행과 함께 밀려 내려가므로 위치를 상대 계산한다(FOOTER_*_OFFSET 참고).
+    돌려주는 행 번호는 견적서 날짜 칸이 참조로 가리켜야 할 자리다.
+    """
+    company = config_values["company"]
+    date_row = summary_row + FOOTER_DATE_OFFSET
+    today = today or datetime.now()
+    ws.cell(row=summary_row + FOOTER_COMPANY_OFFSET, column=FOOTER_COL).value = (
+        str(company.get("name", "")).strip() or None)
+    # 요청 3-6: 양식에 'YYYY-MM-DD'라고만 적혀 있던 자리에 실제 출력 날짜를 넣는다.
+    # 서식이 아니라 문자열로 넣어야 견적서가 참조했을 때도 같은 모양으로 보인다.
+    ws.cell(row=date_row, column=FOOTER_COL).value = today.strftime("%Y-%m-%d")
+    ws.cell(row=summary_row + FOOTER_WRITER_OFFSET, column=FOOTER_COL).value = (
+        settings_store.writer_line(company) or None)
+    return date_row
 
 
-def export_items(items, rates, output_path):
-    """빈 양식에 선택한 카드만 담아 별도 파일로 저장한다."""
+def write_estimate_header(es, config_values, date_row):
+    """견적서 시트 맨 위(받는 업체 / 우리 쪽 연락처 / 날짜 참조)를 설정값으로 채운다(요청 7-1).
+
+    양식에는 `회사명㈜ 귀중`, `사업명` 같은 플레이스홀더가 그대로 남아 있었다.
+    설정창에는 알맹이만 입력받고 `담당자 :` 같은 양식 문구는 여기서 붙인다.
+    """
+    def fill(cells, values):
+        for address, template, key in cells:
+            value = str(values.get(key, "")).strip()
+            es[address] = template.format(value=value) if value else None
+
+    fill(ES_CLIENT_CELLS, config_values["client"])
+    fill(ES_SUPPLIER_CELLS, config_values["supplier"])
+    # 날짜 칸은 기계 시트 푸터를 참조한다. 항목이 늘면 푸터가 밀리므로 참조도 같이 옮겨야
+    # 한다 -- 양식에 박혀 있던 `=기계!Q18`을 그대로 두면 20건만 넘어도 빈 칸을 가리킨다.
+    es[ES_DATE_CELL] = f"={SHEET_NAME}!{get_column_letter(FOOTER_COL)}{date_row}"
+
+
+def widen_price_columns(ws, cols):
+    """단가·최종단가 열이 좁아 금액이 `####`으로 나오던 것을 넓힌다(요청 3-3)."""
+    for key in ("unit_price", "final_price"):
+        col = cols.get(key)
+        if not col:
+            continue
+        letter = get_column_letter(col)
+        current = ws.column_dimensions[letter].width or 0
+        if current < PRICE_COL_WIDTH:
+            ws.column_dimensions[letter].width = PRICE_COL_WIDTH
+
+
+def export_items(items, rates, output_path, config_values=None):
+    """빈 양식에 선택한 카드만 담아 별도 파일로 저장한다.
+
+    v0.0.9부터 저장할 때마다 설정창 값(회사명·작성자·견적서 상단)과 오늘 날짜를 함께 적는다.
+    """
+    config_values = config_values or settings_store.load()
     template_path = get_template_path()
     wb = _openpyxl().load_workbook(template_path)
     ws = _get_sheet(wb, SHEET_NAME)
-    target_file = os.path.abspath(output_path)
-    saved_count, summary_row, cols = write_items_to_sheet(ws, items, rates, False, target_file)
+    saved_count, summary_row, cols = write_items_to_sheet(ws, items, rates)
     _sync_estimate_if_present(wb, ws, cols, summary_row)
+    date_row = write_machine_footer(ws, summary_row, config_values)
+    if ESTIMATE_SHEET_NAME in wb.sheetnames:
+        write_estimate_header(wb[ESTIMATE_SHEET_NAME], config_values, date_row)
     wb.save(output_path)
     return saved_count

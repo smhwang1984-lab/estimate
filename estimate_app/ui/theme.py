@@ -81,6 +81,13 @@ class Theme:
         style.map("TCheckbutton", background=[("active", c["panel"])])
         style.configure("TScrollbar", background=c["panel_2"], troughcolor=c["bg"],
                         bordercolor=c["line"], arrowcolor=c["accent_2"])
+        # 설정창 탭(v0.0.9). clam 기본값은 회색 계열이라 밝은 팔레트에서 탭이 배경에 묻힌다.
+        style.configure("TNotebook", background=c["panel"], bordercolor=c["line"], tabmargins=(4, 6, 4, 0))
+        style.configure("TNotebook.Tab", background=c["panel_2"], foreground=c["muted"],
+                        padding=(16, 8), bordercolor=c["line"])
+        style.map("TNotebook.Tab",
+                  background=[("selected", c["panel"])],
+                  foreground=[("selected", c["accent_2"])])
         style.configure("TLabelframe", background=c["panel"], foreground=c["text"], bordercolor=c["line"])
         style.configure("TLabelframe.Label", background=c["panel"], foreground=c["accent_2"], font=self.bold)
         style.configure("Value.TLabel", background=c["panel"], foreground=c["accent_2"], font=self.value_num)

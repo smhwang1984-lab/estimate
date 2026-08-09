@@ -14,8 +14,6 @@ def create_blank_item(no):
     now = datetime.now()
     item = {
         "no": no,
-        "excel_row": None,
-        "excel_file": None,
         "created_at": now.strftime("%Y-%m-%d"),
         "added_at": now.strftime("%Y-%m-%d %H:%M:%S"),
         "source_file": "",
@@ -28,11 +26,38 @@ def create_blank_item(no):
         "possible": "가능",
         "qty": 1,
         "material": "",
+        # v0.0.9: 열처리 여부와 HRC 경도 Min/Max(요청 5-2, 5-3). 기계 시트에 열처리 전용 열이
+        # 없어서 엑셀에는 Material 값 뒤에 `HRC00~00` 형태로 붙여 기록한다.
+        "heat_treat": False,
+        "hrc_min": "",
+        "hrc_max": "",
         "size": "",
     }
     for key in MACHINE_KEYS:
         item[key] = 0.0
     return item
+
+
+def hrc_text(item):
+    """열처리 경도를 `HRC58~62` 한 덩어리로 만든다. 한쪽만 적었으면 그 값만 쓴다."""
+    if not item.get("heat_treat"):
+        return ""
+    low = str(item.get("hrc_min", "")).strip()
+    high = str(item.get("hrc_max", "")).strip()
+    if low and high:
+        return f"HRC{low}~{high}"
+    if low or high:
+        return f"HRC{low or high}"
+    return "HRC"
+
+
+def material_text(item):
+    """엑셀 Material 칸에 실제로 적을 값. 열처리를 체크했으면 경도를 뒤에 붙인다."""
+    material = str(item.get("material", "")).strip()
+    hardness = hrc_text(item)
+    if not hardness:
+        return material
+    return f"{material} {hardness}".strip()
 
 
 def get_next_no(items):
@@ -86,9 +111,14 @@ def item_matches_search(item, query):
 
 
 def filter_items(items, query):
-    """(전체 유효 카드, 검색에 걸린 카드) 두 벌을 돌려준다. 최근 등록분이 위로 온다."""
+    """(전체 유효 카드, 검색에 걸린 카드) 두 벌을 돌려준다.
+
+    나중에 올린 카드가 위로, 먼저 올린 카드가 아래로 쌓인다(요청 1-1, 1-2).
+    업로드는 한 번에 여러 건이 같은 초에 들어와 `added_at`만으로는 순서가 흔들리므로,
+    2차 키로 카드 번호를 함께 내림차순 정렬해 순서를 고정한다.
+    """
     all_items = [item for item in items if has_item_data(item)]
-    all_items.sort(key=lambda item: item.get("added_at", ""), reverse=True)
+    all_items.sort(key=lambda item: (item.get("added_at", ""), item.get("no", 0)), reverse=True)
     visible_items = [item for item in all_items if item_matches_search(item, query)]
     return all_items, visible_items
 

@@ -62,13 +62,17 @@ DEFAULT_LAYOUT = {
     "page_size": 40,
     "cell_pad_x": 8,
     "cell_pad_y": 6,
-    "col_check_width": 56,
-    "col_model_width": 160,
-    "col_partno_width": 220,
-    "col_material_width": 130,
-    "col_size_width": 200,
-    "col_status_width": 120,
-    "col_price_width": 160,
+    # v0.0.9: 맨 앞 No 열과 Comment 열이 늘어난 만큼(요청 1-3, 1-4) 나머지 열을 조금씩 줄였다.
+    "col_no_width": 46,
+    "col_check_width": 50,
+    "col_model_width": 120,
+    "col_partno_width": 180,
+    "col_partname_width": 220,
+    "col_comment_width": 170,
+    "col_material_width": 120,
+    "col_size_width": 150,
+    "col_status_width": 100,
+    "col_price_width": 150,
 }
 
 DEFAULT_RATES = {
