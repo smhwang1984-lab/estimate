@@ -1,5 +1,6 @@
 """견적 카드 한 건의 자료 구조와, 그 위에서 도는 값 변환·검색 규칙."""
 
+import math
 import re
 from datetime import datetime
 
@@ -32,6 +33,9 @@ def create_blank_item(no):
         "hrc_min": "",
         "hrc_max": "",
         "size": "",
+        # v0.1.0: Size 치수 x 소재 비중으로 계산한 무게(kg, 요청 4). 치수를 모르거나
+        # (직접입력) 소재 비중을 못 찾으면 None -- 추측해서 채우지 않는다.
+        "weight": None,
     }
     for key in MACHINE_KEYS:
         item[key] = 0.0
@@ -58,6 +62,28 @@ def material_text(item):
     if not hardness:
         return material
     return f"{material} {hardness}".strip()
+
+
+def calc_weight_kg(shape, t=None, w=None, l=None, d=None, density=None):
+    """치수(mm)와 비중(g/cm³)으로 무게(kg, 1개 기준)를 낸다(요청 4-1).
+
+    치수를 모르거나(shape="custom") 비중을 못 찾았으면 None -- 추측해서 채우지 않는다.
+    mm³ x g/cm³ 는 그대로 mg이므로 1,000,000으로 나누면 kg이 된다
+    (mm³->cm³ /1000, g->kg /1000, 합쳐서 /1e6).
+    """
+    if density is None:
+        return None
+    if shape == "block":
+        if None in (t, w, l):
+            return None
+        volume_mm3 = t * w * l
+    elif shape == "rod":
+        if None in (d, l):
+            return None
+        volume_mm3 = math.pi * (d / 2) ** 2 * l
+    else:
+        return None
+    return volume_mm3 * density / 1_000_000
 
 
 def get_next_no(items):

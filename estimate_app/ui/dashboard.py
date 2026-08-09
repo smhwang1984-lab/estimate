@@ -31,6 +31,12 @@ class EstimateApp:
         # 세션에는 더 이상 단가를 담지 않는다 — 담아 두면 옛 세션이 새 설정을 덮어쓴다.
         self.settings = settings_store.load()
         self.rates = self.settings["rates"]
+        # v0.1.0: 현황판 열 폭(요청 3-3). 사용자가 헤더 구분선을 끌어 고친 값만 여기 담기고,
+        # 그 열은 col_width_overridden에 표시돼 창 크기가 바뀌어도 폭을 지킨다. 아직 아무도
+        # 안 건드린 열은 theme.json 기본값과 원래 weight 비율을 그대로 따른다.
+        self.col_widths = dict(self.settings.get("col_widths", {}))
+        self.col_width_overridden = set(self.col_widths.keys())
+        self.header_frame = None
         self.display_page_size = self.theme.layout["page_size"]
         self.display_limit = self.display_page_size
         self.session_restored_count = 0
@@ -171,7 +177,8 @@ class EstimateApp:
                  font=self.theme.pane_head, padx=14, pady=4).pack(anchor="w")
         tk.Frame(column, bg=c["line"], height=1).pack(fill=tk.X)
 
-        build_header(column, self.theme).pack(fill=tk.X)
+        self.header_frame = build_header(column, self)
+        self.header_frame.pack(fill=tk.X)
         build_header_underline(column, self.theme).pack(fill=tk.X)
 
         self.row_canvas = tk.Canvas(column, bg=c["row_bg"], highlightthickness=0)

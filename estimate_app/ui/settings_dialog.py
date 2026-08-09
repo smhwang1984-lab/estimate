@@ -5,6 +5,7 @@
     공정 단가      카드 팝업에서는 고칠 수 없는 고정값으로 쓰인다(요청 6-2).
     Material       카드 입력창의 선택 목록. 여기서 추가·삭제한다(요청 6-3).
     회사 / 양식    기계 시트 푸터의 회사명·작성자와, 견적서 시트 맨 위 문구(요청 6-4, 7-1).
+    소재 비중      v0.1.0 신설. 카드에서 무게를 계산할 때 쓰는 소재별 비중(요청 4-2).
 
 값은 `%LOCALAPPDATA%\\MachineEstimate\\settings.json`에 저장한다(core/settings.py).
 """
@@ -156,7 +157,76 @@ def open_settings_dialog(app):
     ttk.Label(add_row, text="여러 개를 골라 한 번에 지울 수 있습니다.",
               style="Muted.TLabel").pack(side=tk.LEFT, padx=(12, 0))
 
-    # ---------- 3) 회사 / 견적서 양식 ----------
+    # ---------- 3) 소재 비중 ----------
+    density_tab = ttk.Frame(notebook, padding=14)
+    notebook.add(density_tab, text="소재 비중")
+    ttk.Label(density_tab,
+              text="카드에서 Size 치수로 무게를 계산할 때 쓰는 소재별 비중(g/cm³)입니다. "
+                   "소재 이름에 이 키워드가 들어 있으면 매칭됩니다(예: 'AL6061'은 목록의 "
+                   "'AL6061-T6', 'AL6061P-T651'도 함께 찾습니다). 정확히 같은 이름을 등록하면 "
+                   "그 소재에만 다른 값을 줄 수 있습니다.",
+              style="Muted.TLabel", wraplength=760, justify="left").pack(anchor="w", pady=(0, 10))
+
+    density_list_row = ttk.Frame(density_tab)
+    density_list_row.pack(fill=tk.BOTH, expand=True)
+    density_scroll = ttk.Scrollbar(density_list_row, orient=tk.VERTICAL)
+    density_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    density_tree = ttk.Treeview(density_list_row, columns=("name", "density"), show="headings",
+                                selectmode="extended", yscrollcommand=density_scroll.set)
+    density_tree.heading("name", text="소재 이름 / 키워드")
+    density_tree.heading("density", text="비중 (g/cm³)")
+    density_tree.column("name", width=420, anchor="w")
+    density_tree.column("density", width=140, anchor="e")
+    density_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    density_scroll.configure(command=density_tree.yview)
+    for entry in current["densities"]:
+        density_tree.insert("", tk.END, values=(entry["name"], entry["density"]))
+
+    density_add_row = ttk.Frame(density_tab, padding=(0, 10, 0, 0))
+    density_add_row.pack(fill=tk.X)
+    new_density_name_var = tk.StringVar()
+    new_density_value_var = tk.StringVar()
+
+    def add_density():
+        name = new_density_name_var.get().strip()
+        value = parse_number(new_density_value_var.get())
+        if not name:
+            messagebox.showinfo("이름 없음", "소재 이름(키워드)을 입력하세요.", parent=dialog)
+            return
+        if value is None or value <= 0:
+            messagebox.showerror("입력 오류", "비중은 0보다 큰 숫자로 입력해 주세요.", parent=dialog)
+            return
+        # 같은 이름이 이미 있으면 값만 갱신한다(중복으로 쌓이지 않게).
+        for iid in density_tree.get_children():
+            if density_tree.item(iid, "values")[0] == name:
+                density_tree.item(iid, values=(name, value))
+                break
+        else:
+            density_tree.insert("", tk.END, values=(name, value))
+        new_density_name_var.set("")
+        new_density_value_var.set("")
+        density_name_entry.focus_set()
+
+    def remove_density():
+        selected = density_tree.selection()
+        if not selected:
+            messagebox.showinfo("선택 없음", "지울 항목을 목록에서 고르세요.", parent=dialog)
+            return
+        for iid in selected:
+            density_tree.delete(iid)
+
+    ttk.Label(density_add_row, text="이름/키워드").pack(side=tk.LEFT)
+    density_name_entry = ttk.Entry(density_add_row, textvariable=new_density_name_var, width=22)
+    density_name_entry.pack(side=tk.LEFT, padx=(6, 12))
+    ttk.Label(density_add_row, text="비중").pack(side=tk.LEFT)
+    density_value_entry = ttk.Entry(density_add_row, textvariable=new_density_value_var, width=8)
+    density_value_entry.pack(side=tk.LEFT, padx=(6, 12))
+    density_name_entry.bind("<Return>", lambda event: density_value_entry.focus_set())
+    density_value_entry.bind("<Return>", lambda event: add_density())
+    ttk.Button(density_add_row, text="추가/수정", command=add_density).pack(side=tk.LEFT, padx=3)
+    ttk.Button(density_add_row, text="선택 삭제", command=remove_density).pack(side=tk.LEFT, padx=3)
+
+    # ---------- 4) 회사 / 견적서 양식 ----------
     form_tab = ttk.Frame(notebook, padding=14)
     notebook.add(form_tab, text="회사 / 견적서 양식")
     # 세 묶음을 세로로 쌓으면 마지막 묶음이 창 밖으로 밀려나므로 좌우로 나눠 놓는다.
@@ -196,12 +266,19 @@ def open_settings_dialog(app):
                                      parent=dialog)
                 return
             rates[key] = value
+        densities = []
+        for iid in density_tree.get_children():
+            name, value = density_tree.item(iid, "values")
+            densities.append({"name": str(name), "density": float(value)})
         payload = {
             "rates": rates,
             "materials": list(material_list.get(0, tk.END)),
+            "densities": densities,
             "company": {key: company_vars[key].get().strip() for key, _, _ in COMPANY_FIELDS},
             "client": {key: client_vars[key].get().strip() for key, _, _ in CLIENT_FIELDS},
             "supplier": {key: supplier_vars[key].get().strip() for key, _, _ in SUPPLIER_FIELDS},
+            # 이 창에서는 열 폭을 다루지 않으니 지금 값을 그대로 넘긴다(요청 3-3, table.py에서 고침).
+            "col_widths": current.get("col_widths", {}),
         }
         if not settings_store.save(payload):
             messagebox.showerror("저장 오류",

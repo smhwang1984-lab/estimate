@@ -7,14 +7,21 @@ v0.0.9 변경점
     - 공정 단가는 더 이상 여기서 못 고친다. 설정창 값이 그대로 쓰인다(요청 6-2).
     - 정보 타일에서 기계 시트 폴더/파일과 엑셀 행을 뺐다(요청 4-3, 4-4).
       NO는 엑셀 행이 아니라 현황판에 보이는 순번이다(요청 4-5).
+
+v0.1.0 변경점
+    - 시간·HRC·Qty 입력칸은 숫자(와 소수점) 외의 글자가 아예 들어가지 않는다(요청 2).
+      저장 시점 검사(has_unsaved_changes 이후의 float() 변환)는 마지막 방어선으로 남겨 둔다.
+    - Size에 비중을 곱해 무게를 함께 보여 준다(요청 4). 직접입력이거나 소재의 비중을
+      찾지 못하면 계산할 수 없으므로 무게를 비우고 그 이유를 안내한다.
 """
 
+import math
 import re
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from ..core import config
-from ..core.model import parse_number
+from ..core import config, settings as settings_store
+from ..core.model import calc_weight_kg, parse_number
 from ..core.pricing import calc_row
 
 SHAPE_BLOCK = "블록"
@@ -23,6 +30,24 @@ SHAPE_CUSTOM = "직접입력"
 
 COMMENT_MIN_LINES = 2
 COMMENT_MAX_LINES = 20
+
+
+def _numeric_entry(parent, textvariable, width, allow_decimal=True):
+    """숫자(허용하면 소수점 하나까지)만 들어가는 입력칸(요청 2).
+
+    Tk의 validate='key'는 글자가 입력칸에 반영되기 전에 불려서, 통과 못 하는 글자는
+    아예 찍히지 않는다. 지우는 중간 상태(빈 문자열)는 항상 허용해야 커서로 전체를
+    지울 수 있다.
+    """
+    entry = ttk.Entry(parent, textvariable=textvariable, width=width)
+    pattern = re.compile(r"^\d*\.?\d*$" if allow_decimal else r"^\d*$")
+
+    def validate(proposed):
+        return proposed == "" or pattern.match(proposed) is not None
+
+    vcmd = (entry.register(validate), "%P")
+    entry.configure(validate="key", validatecommand=vcmd)
+    return entry
 
 
 def display_no_text(app, no):
@@ -89,10 +114,10 @@ def _build_material_section(app, parent, item):
     hrc_row = ttk.Frame(box)
     hrc_row.grid(row=2, column=0, columnspan=4, sticky="w", padx=6, pady=(2, 2))
     ttk.Label(hrc_row, text="HRC").pack(side=tk.LEFT, padx=(6, 6))
-    min_entry = ttk.Entry(hrc_row, textvariable=hrc_min_var, width=6)
+    min_entry = _numeric_entry(hrc_row, hrc_min_var, width=6)
     min_entry.pack(side=tk.LEFT)
     ttk.Label(hrc_row, text="~").pack(side=tk.LEFT, padx=6)
-    max_entry = ttk.Entry(hrc_row, textvariable=hrc_max_var, width=6)
+    max_entry = _numeric_entry(hrc_row, hrc_max_var, width=6)
     max_entry.pack(side=tk.LEFT)
     ttk.Label(hrc_row, text="Min / Max 경도", style="Muted.TLabel").pack(side=tk.LEFT, padx=(10, 0))
 
@@ -148,8 +173,12 @@ def _build_comment_section(app, parent, item):
     return text
 
 
-def _build_size_section(parent, item):
-    """Size 입력 영역. (최종 Size 변수)를 돌려준다."""
+def _build_size_section(app, parent, item, material_var):
+    """Size 입력 영역. (최종 Size 변수, 무게를 다시 계산해 돌려주는 함수)를 돌려준다.
+
+    v0.1.0: 치수 x 소재 비중으로 무게를 계산해 보여 준다(요청 4). 직접입력이거나
+    설정창에 소재 비중이 없으면 계산할 수 없으므로 무게를 비우고 이유를 안내한다.
+    """
     size_box = ttk.LabelFrame(parent, text="Size (소재 규격) 입력", padding=10)
     size_box.pack(fill=tk.X)
 
@@ -157,6 +186,7 @@ def _build_size_section(parent, item):
     t_var, w_var, l_var, d_var = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.StringVar()
     custom_size_var = tk.StringVar()
     final_size_var = tk.StringVar(value=item["size"])
+    weight_var = tk.StringVar(value="")
 
     # 이미 입력돼 있던 Size 문자열을 보고 어느 형상으로 적었는지 되짚어 칸을 채워 준다.
     current_size = item["size"].strip()
@@ -219,16 +249,16 @@ def _build_size_section(parent, item):
         shape = shape_var.get()
         if shape == SHAPE_BLOCK:
             ttk.Label(input_subframe, text="T (두께)").grid(row=0, column=0, padx=3, pady=2)
-            ttk.Entry(input_subframe, textvariable=t_var, width=10).grid(row=0, column=1, padx=5, pady=2)
+            _numeric_entry(input_subframe, t_var, width=10).grid(row=0, column=1, padx=5, pady=2)
             ttk.Label(input_subframe, text="W (폭)").grid(row=0, column=2, padx=3, pady=2)
-            ttk.Entry(input_subframe, textvariable=w_var, width=10).grid(row=0, column=3, padx=5, pady=2)
+            _numeric_entry(input_subframe, w_var, width=10).grid(row=0, column=3, padx=5, pady=2)
             ttk.Label(input_subframe, text="L (길이)").grid(row=0, column=4, padx=3, pady=2)
-            ttk.Entry(input_subframe, textvariable=l_var, width=10).grid(row=0, column=5, padx=5, pady=2)
+            _numeric_entry(input_subframe, l_var, width=10).grid(row=0, column=5, padx=5, pady=2)
         elif shape == SHAPE_ROD:
             ttk.Label(input_subframe, text="D (외경/Ø)").grid(row=0, column=0, padx=3, pady=2)
-            ttk.Entry(input_subframe, textvariable=d_var, width=12).grid(row=0, column=1, padx=5, pady=2)
+            _numeric_entry(input_subframe, d_var, width=12).grid(row=0, column=1, padx=5, pady=2)
             ttk.Label(input_subframe, text="L (길이)").grid(row=0, column=2, padx=3, pady=2)
-            ttk.Entry(input_subframe, textvariable=l_var, width=12).grid(row=0, column=3, padx=5, pady=2)
+            _numeric_entry(input_subframe, l_var, width=12).grid(row=0, column=3, padx=5, pady=2)
         else:
             ttk.Label(input_subframe, text="Size 규격").grid(row=0, column=0, padx=3, pady=2)
             ttk.Entry(input_subframe, textvariable=custom_size_var, width=35).grid(row=0, column=1, padx=5, pady=2)
@@ -241,7 +271,48 @@ def _build_size_section(parent, item):
     preview.pack(fill=tk.X, pady=(4, 0))
     ttk.Label(preview, text="최종 반영 Size", style="Muted.TLabel").pack(side=tk.LEFT, padx=(0, 8))
     ttk.Label(preview, textvariable=final_size_var, style="Value.TLabel").pack(side=tk.LEFT)
-    return final_size_var
+
+    def _dims_complete():
+        shape = shape_var.get()
+        if shape == SHAPE_BLOCK:
+            return all(v.get().strip() for v in (t_var, w_var, l_var))
+        if shape == SHAPE_ROD:
+            return all(v.get().strip() for v in (d_var, l_var))
+        return False
+
+    def get_weight():
+        """치수 x 소재 비중으로 무게(kg)를 계산한다. 직접입력이거나 비중을 못 찾으면 None."""
+        if shape_var.get() == SHAPE_CUSTOM or not _dims_complete():
+            return None
+        density = settings_store.resolve_density(material_var.get(), app.settings.get("densities", []))
+        if density is None:
+            return None
+        if shape_var.get() == SHAPE_BLOCK:
+            return calc_weight_kg("block", t=parse_number(t_var.get()), w=parse_number(w_var.get()),
+                                  l=parse_number(l_var.get()), density=density)
+        return calc_weight_kg("rod", d=parse_number(d_var.get()), l=parse_number(l_var.get()), density=density)
+
+    def update_weight_preview(*args):
+        if shape_var.get() == SHAPE_CUSTOM:
+            weight_var.set("직접입력은 치수를 몰라 계산할 수 없습니다.")
+            return
+        if not _dims_complete():
+            weight_var.set("")
+            return
+        weight = get_weight()
+        weight_var.set(f"{weight:.2f} kg" if weight is not None
+                       else "비중 미등록 (설정 > 소재 비중에서 추가)")
+
+    weight_row = ttk.Frame(size_box)
+    weight_row.pack(fill=tk.X, pady=(4, 0))
+    ttk.Label(weight_row, text="무게(1개)", style="Muted.TLabel").pack(side=tk.LEFT, padx=(0, 8))
+    ttk.Label(weight_row, textvariable=weight_var, style="Value.TLabel").pack(side=tk.LEFT)
+
+    for variable in (t_var, w_var, l_var, d_var, material_var, shape_var):
+        variable.trace_add("write", update_weight_preview)
+    update_weight_preview()
+
+    return final_size_var, get_weight
 
 
 def open_item_popup(app, no):
@@ -305,7 +376,8 @@ def open_item_popup(app, no):
 
     ttk.Label(info, text="수량(Qty)").grid(row=1, column=2, sticky="e", padx=6, pady=6)
     fields["qty"] = tk.StringVar(value=str(item["qty"]))
-    ttk.Entry(info, textvariable=fields["qty"], width=18).grid(row=1, column=3, sticky="ew", padx=6, pady=6)
+    _numeric_entry(info, fields["qty"], width=18, allow_decimal=False).grid(
+        row=1, column=3, sticky="ew", padx=6, pady=6)
 
     ttk.Label(info, text="가능여부").grid(row=2, column=0, sticky="e", padx=6, pady=6)
     fields["possible"] = tk.StringVar(value=item["possible"])
@@ -314,7 +386,7 @@ def open_item_popup(app, no):
 
     material_var, heat_var, hrc_min_var, hrc_max_var = _build_material_section(app, left, item)
     comment_text = _build_comment_section(app, left, item)
-    final_size_var = _build_size_section(left, item)
+    final_size_var, get_weight = _build_size_section(app, left, item, material_var)
 
     machine_fields = config.get_machine_fields()
     times = ttk.LabelFrame(frame, text="각 공정별 시간 입력", padding=10)
@@ -332,7 +404,7 @@ def open_item_popup(app, no):
         row_index = idx + 1
         ttk.Label(times, text=label).grid(row=row_index, column=0, sticky="w", padx=6, pady=4)
         fields[key] = tk.StringVar(value=(str(item[key]) if item[key] > 0 else ""))
-        ttk.Entry(times, textvariable=fields[key], width=10).grid(
+        _numeric_entry(times, fields[key], width=10).grid(
             row=row_index, column=1, sticky="ew", padx=4, pady=4)
         # v0.0.9: 단가는 설정창에서만 고친다. 여기서는 읽기 전용으로 보여 주기만 한다.
         ttk.Label(times, text=f"{int(app.rates[key]):,}", anchor="e").grid(
@@ -439,6 +511,7 @@ def open_item_popup(app, no):
         item["hrc_min"] = hrc_min if heat_var.get() else ""
         item["hrc_max"] = hrc_max if heat_var.get() else ""
         item["size"] = final_size_var.get().strip()
+        item["weight"] = get_weight()
         item["comment"] = read_comment().strip()
         item["possible"] = fields["possible"].get().strip()
         item["qty"] = qty_value

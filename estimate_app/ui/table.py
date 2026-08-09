@@ -23,12 +23,21 @@ v0.0.9: 맨 앞에 화면 순번 No 열을, 품명과 소재 사이에 Comment �
 선택 방식은 윈도우 탐색기와 같게 바꿨다(요청 2-1, 2-2) — 한 번 클릭은 그 행만 선택,
 Ctrl+클릭은 하나씩 더하고 빼기, Shift+클릭은 기준 행부터 범위 선택, 카드를 여는 것은
 더블클릭이다.
+
+v0.1.0: 헤더 열 사이에 연한 세로 구분선을 두고, 끌면 좌우 열 폭이 바뀐다(요청 3-2, 3-3).
+데이터 행에는 선을 넣지 않는다(요청 3-1) — 구분선은 헤더에만 있다. 폭은 app.col_widths에
+살아 있고 끄는 즉시 헤더와 모든 행 슬롯에 같이 반영되며, 손을 떼면 settings.json에 남는다
+(다음에 켤 때도 그대로 열린다). 한 번이라도 사용자가 끈 열은 창 크기가 바뀌어도 그 폭을
+지키도록 weight를 0으로 고정한다 — 그 전까지는 품명·Comment가 남는 폭을 나눠 갖는다.
 """
 
 import tkinter as tk
 
+from ..core import settings as settings_store
 from ..core.pricing import calc_row
 from .widgets import make_checkbox
+
+MIN_COL_WIDTH = 40
 
 # (제목, 최소 폭 설정 키, 남는 폭을 가져가는 비율).
 # 비율이 0이면 최소 폭에 고정된다. 품명과 Comment만 늘어나며, 창이 넓을 때 품명 한 열이
@@ -72,20 +81,55 @@ def one_line(text):
     return " ".join(str(text).split())
 
 
-def configure_columns(container, theme):
-    """헤더와 각 행이 같은 열 폭을 쓰도록 동일한 규칙을 적용한다."""
-    layout = theme.layout
+def fit_text(theme, text, max_width_px):
+    """실제 글꼴 폭으로 재 가며 칸에 맞게 자른다(요청 3-4). shorten()의 상수 글자 수 대신
+    쓴다 — 소재 칸이 사용자가 끌어 조절할 수 있게 되면서 상수로는 넓혀도 `…`이 남는다.
+    """
+    text = str(text)
+    font = theme.table_cell_font
+    if font.measure(text) <= max_width_px:
+        return text
+    ellipsis = "…"
+    budget = max_width_px - font.measure(ellipsis)
+    if budget <= 0:
+        return ellipsis
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if font.measure(text[:mid]) <= budget:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo] + ellipsis
+
+
+def configure_columns(container, app):
+    """헤더와 각 행이 같은 열 폭을 쓰도록 동일한 규칙을 적용한다.
+
+    v0.1.0: 폭은 theme.json 기본값이 아니라 app.col_widths(설정에 저장, 요청 3-3)를
+    먼저 본다. 사용자가 직접 끈 열(app.col_width_overridden)은 weight를 0으로 고정해
+    창을 늘려도 그 폭을 지킨다 — 그 전까지는 원래 비율(품명 3 : Comment 2)대로 나눠 갖는다.
+    """
+    layout = app.theme.layout
+    widths = getattr(app, "col_widths", {})
+    overridden = getattr(app, "col_width_overridden", set())
     for idx, (_, width_key, weight) in enumerate(COLUMNS):
-        container.columnconfigure(idx, weight=weight, minsize=layout[width_key])
+        width = widths.get(width_key, layout[width_key])
+        effective_weight = 0 if width_key in overridden else weight
+        container.columnconfigure(idx, weight=effective_weight, minsize=width)
 
 
-def build_header(parent, theme):
-    """스크롤 영역 밖에 두는 고정 헤더(th). CSS의 position:sticky 역할."""
+def build_header(parent, app):
+    """스크롤 영역 밖에 두는 고정 헤더(th). CSS의 position:sticky 역할.
+
+    v0.1.0: 열 사이에 끌어서 폭을 바꾸는 구분선을 더한다(요청 3-2, 3-3).
+    """
+    theme = app.theme
     c = theme.colors
     pad_x, pad_y = theme.layout["cell_pad_x"], theme.layout["cell_pad_y"]
 
     header = tk.Frame(parent, bg=c["th_bg"])
-    configure_columns(header, theme)
+    configure_columns(header, app)
     for idx, (title, _, _) in enumerate(COLUMNS):
         if title == "최종단가":
             anchor = "e"
@@ -95,7 +139,91 @@ def build_header(parent, theme):
             anchor = "w"
         tk.Label(header, text=title, bg=c["th_bg"], fg=c["th_fg"], font=theme.table_head,
                  anchor=anchor).grid(row=0, column=idx, sticky="ew", padx=pad_x, pady=pad_y)
+    _add_column_resizers(app, header)
     return header
+
+
+def _apply_column_widths(app):
+    """폭이 바뀐 뒤 헤더와 지금 살아 있는 행 슬롯 전부에 같은 값을 적용한다.
+
+    슬롯은 dashboard.row_slots에 담겨 재사용되므로(숨겨 둔 것도 나중에 다시 쓰인다),
+    헤더만 고치면 표가 어긋난다 -- 반드시 함께 고친다.
+    """
+    if getattr(app, "header_frame", None) is not None:
+        configure_columns(app.header_frame, app)
+    for slot in getattr(app, "row_slots", []):
+        configure_columns(slot["frame"], app)
+
+
+def _persist_column_widths(app):
+    """settings.json에 지금 열 폭을 남긴다(요청 3-3). 드래그를 끝낸 순간(손을 뗄 때)만 쓴다
+    -- 끄는 동안 매 픽셀마다 파일에 쓰면 느려진다.
+    """
+    payload = dict(app.settings)
+    payload["col_widths"] = dict(app.col_widths)
+    if settings_store.save(payload):
+        app.settings = payload
+
+
+def _reposition_resizers(header, handles):
+    for idx, handle in handles:
+        # row를 같이 안 주면 Tk가 "그 열 하나"가 아니라 그리드 전체 bbox를 돌려준다
+        # (직접 겪음 -- 핸들 9개가 전부 같은 자리에 겹쳐 소재 헤더 글자를 가렸다).
+        bbox = header.grid_bbox(row=0, column=idx)
+        if not bbox:
+            continue
+        x, _y, w, _h = bbox
+        handle.place(x=x + w - 1, y=0, width=2, relheight=1.0)
+
+
+def _add_column_resizers(app, header):
+    """열과 열 사이에 연한 세로 구분선을 두고, 끌면 좌우 폭이 바뀐다(요청 3-2, 3-3).
+
+    데이터 행에는 선을 넣지 않는다(요청 3-1) -- 이 구분선은 헤더 위에만 얹는다(`place`로
+    경계 위치에 겹쳐 그린다. 헤더는 grid라 열과 열 사이에 별도 칸을 끼워 넣지 않아도 된다).
+    """
+    theme = app.theme
+    handles = []
+    drag_state = {}
+
+    for idx in range(len(COLUMNS) - 1):
+        handle = tk.Frame(header, bg=theme.color("line"), cursor="sb_h_double_arrow")
+        handles.append((idx, handle))
+        left_key = COLUMNS[idx][1]
+        right_key = COLUMNS[idx + 1][1]
+
+        def start_drag(event, left_key=left_key, right_key=right_key):
+            drag_state["x"] = event.x_root
+            drag_state["left"] = app.col_widths.get(left_key, theme.layout[left_key])
+            drag_state["right"] = app.col_widths.get(right_key, theme.layout[right_key])
+
+        def on_drag(event, left_key=left_key, right_key=right_key):
+            if "x" not in drag_state:
+                return
+            delta = event.x_root - drag_state["x"]
+            new_left = max(MIN_COL_WIDTH, drag_state["left"] + delta)
+            actual_delta = new_left - drag_state["left"]
+            new_right = drag_state["right"] - actual_delta
+            if new_right < MIN_COL_WIDTH:
+                new_right = MIN_COL_WIDTH
+                new_left = drag_state["left"] + drag_state["right"] - MIN_COL_WIDTH
+            app.col_widths[left_key] = int(new_left)
+            app.col_widths[right_key] = int(new_right)
+            app.col_width_overridden.add(left_key)
+            app.col_width_overridden.add(right_key)
+            _apply_column_widths(app)
+            _reposition_resizers(header, handles)
+
+        def end_drag(event):
+            drag_state.clear()
+            _persist_column_widths(app)
+
+        handle.bind("<Button-1>", start_drag)
+        handle.bind("<B1-Motion>", on_drag)
+        handle.bind("<ButtonRelease-1>", end_drag)
+
+    header.bind("<Configure>", lambda e: _reposition_resizers(header, handles))
+    header.after_idle(lambda: _reposition_resizers(header, handles))
 
 
 def build_header_underline(parent, theme):
@@ -127,7 +255,7 @@ def create_row_slot(app):
     pad_x, pad_y = layout["cell_pad_x"], layout["cell_pad_y"]
 
     row = tk.Frame(app.row_container, bg=c["row_bg"])
-    configure_columns(row, theme)
+    configure_columns(row, app)
 
     slot = {"frame": row, "no": None, "parity": 0, "new_badge": None, "tinted": []}
 
@@ -225,7 +353,11 @@ def update_row_slot(app, slot, item, row_index):
     slot["date_label"].configure(text=item["created_at"])
     slot["partname_label"].configure(text=shorten(item["part_name"] or "품명 미입력", 40))
     slot["comment_label"].configure(text=shorten(one_line(item.get("comment", "")) or "-", 20))
-    slot["material_label"].configure(text=shorten(item["material"] or "-", 14))
+    # 요청 3-4: 상수 글자 수 대신 지금 열 폭에서 실제로 들어가는 만큼만 보여 준다.
+    # 소재 열이 사용자가 끌어 조절할 수 있게 되면서, 넓혀도 `…`이 남던 것을 없앤다.
+    material_width = app.col_widths.get("col_material_width", theme.layout["col_material_width"])
+    usable = max(20, material_width - 2 * theme.layout["cell_pad_x"])
+    slot["material_label"].configure(text=fit_text(theme, item["material"] or "-", usable))
     slot["size_label"].configure(text=shorten(item["size"] or "-", 17))
 
     status_bg, status_fg, _ = theme.get_status_colors(item["possible"])

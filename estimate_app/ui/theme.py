@@ -5,7 +5,7 @@
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import font as tkfont, ttk
 
 from ..core import config
 
@@ -28,6 +28,9 @@ class Theme:
         table_family = self.fonts["table_family"]
         self.table_head = (table_family, -self.fonts["table_head_px"], "bold")
         self.table_cell = (table_family, -self.fonts["table_cell_px"])
+        # 소재 칸 자르기(요청 3-4)가 실제 글꼴 폭으로 재도록 Font 객체도 만들어 둔다
+        # (table_cell은 튜플이라 .measure()가 없다).
+        self.table_cell_font = tkfont.Font(font=self.table_cell)
         self.table_cell_bold = (table_family, -self.fonts["table_cell_px"], "bold")
         self.table_sub = (table_family, -self.fonts["table_sub_px"])
         self.pane_head = (family, -self.fonts["pane_head_px"], "bold")

@@ -69,10 +69,13 @@ DEFAULT_LAYOUT = {
     "col_partno_width": 180,
     "col_partname_width": 220,
     "col_comment_width": 170,
-    "col_material_width": 120,
+    # v0.1.0: 소재 칸이 좁아 기본 소재 목록 대부분이 잘렸다(요청 3-4). 30px 넓히고,
+    # 여유가 있던 금액 칸에서 같은 만큼 덜어 전체 폭 합계는 그대로 뒀다(1억 단위까지도
+    # 120px에 들어가는 것을 실측해 확인함).
+    "col_material_width": 150,
     "col_size_width": 150,
     "col_status_width": 100,
-    "col_price_width": 150,
+    "col_price_width": 120,
 }
 
 DEFAULT_RATES = {
