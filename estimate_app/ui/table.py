@@ -39,6 +39,7 @@ dashboard가 목록 전체를 보고 미리 만들어 둔 집합(app.duplicate_p
 import tkinter as tk
 
 from ..core import settings as settings_store
+from ..core.model import hrc_text
 from ..core.pricing import calc_row
 from .widgets import make_checkbox
 
@@ -55,15 +56,27 @@ COLUMNS = [
     ("품명", "col_partname_width", 3),
     ("Comment", "col_comment_width", 2),
     ("소재", "col_material_width", 0),
+    ("열처리", "col_heat_width", 0),
     ("사이즈", "col_size_width", 0),
     ("가능여부", "col_status_width", 0),
     ("최종단가", "col_price_width", 0),
 ]
 
+HEADER_KEY_BY_WIDTH = {
+    "col_model_width": "model",
+    "col_partno_width": "part_no",
+    "col_partname_width": "part_name",
+    "col_comment_width": "comment",
+    "col_material_width": "material",
+    "col_heat_width": "heat",
+    "col_size_width": "size",
+    "col_status_width": "possible",
+}
+
 # 열 인덱스를 이름으로 부르기 위한 표. COLUMNS 순서를 바꾸면 여기도 같이 고쳐야 한다.
 COL_NO, COL_CHECK, COL_MODEL, COL_PARTNO = 0, 1, 2, 3
-COL_PARTNAME, COL_COMMENT, COL_MATERIAL, COL_SIZE = 4, 5, 6, 7
-COL_STATUS, COL_PRICE = 8, 9
+COL_PARTNAME, COL_COMMENT, COL_MATERIAL, COL_HEAT = 4, 5, 6, 7
+COL_SIZE, COL_STATUS, COL_PRICE = 8, 9, 10
 
 
 def shorten(text, max_chars):
@@ -135,15 +148,22 @@ def build_header(parent, app):
 
     header = tk.Frame(parent, bg=c["th_bg"])
     configure_columns(header, app)
-    for idx, (title, _, _) in enumerate(COLUMNS):
+    app.header_labels = {}
+    for idx, (title, width_key, _) in enumerate(COLUMNS):
+        header_key = HEADER_KEY_BY_WIDTH.get(width_key)
+        if header_key:
+            title = app.settings.get("headers", {}).get(header_key, title)
         if title == "최종단가":
             anchor = "e"
         elif title in ("가능여부", "No"):
             anchor = "center"
         else:
             anchor = "w"
-        tk.Label(header, text=title, bg=c["th_bg"], fg=c["th_fg"], font=theme.table_head,
-                 anchor=anchor).grid(row=0, column=idx, sticky="ew", padx=pad_x, pady=pad_y)
+        label = tk.Label(header, text=title, bg=c["th_bg"], fg=c["th_fg"], font=theme.table_head,
+                         anchor=anchor)
+        label.grid(row=0, column=idx, sticky="ew", padx=pad_x, pady=pad_y)
+        if header_key:
+            app.header_labels[header_key] = label
     _add_column_resizers(app, header)
     return header
 
@@ -316,6 +336,7 @@ def create_row_slot(app):
     # Comment는 품명과 소재 사이(요청 1-4).
     slot["comment_label"] = label(COL_COMMENT, theme.table_cell, fg=c["muted"])
     slot["material_label"] = label(COL_MATERIAL, theme.table_cell, fg=c["muted"])
+    slot["heat_label"] = label(COL_HEAT, theme.table_cell, fg=c["muted"])
     slot["size_label"] = label(COL_SIZE, theme.table_cell, fg=c["muted"])
 
     # 가능여부 배지는 자기 색(성공/경고/위험)을 유지해야 하므로 hover 시 물드는 tinted에서 뺀다.

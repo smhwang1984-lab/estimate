@@ -359,10 +359,11 @@ def open_item_popup(app, no):
     info.columnconfigure(1, weight=1)
     info.columnconfigure(3, weight=1)
 
+    headers = app.settings.get("headers", {})
     text_rows = [
-        ("품번 *", "part_no", 0, 0),
-        ("품명 *", "part_name", 0, 2),
-        ("기종", "model", 1, 0),
+        (f"{headers.get('part_no', '품번')} *", "part_no", 0, 0),
+        (f"{headers.get('part_name', '품명')} *", "part_name", 0, 2),
+        (headers.get("model", "기종"), "model", 1, 0),
     ]
     for label, key, row, col in text_rows:
         ttk.Label(info, text=label).grid(row=row, column=col, sticky="e", padx=6, pady=6)
@@ -370,12 +371,12 @@ def open_item_popup(app, no):
         ttk.Entry(info, textvariable=fields[key], width=18).grid(
             row=row, column=col + 1, sticky="ew", padx=6, pady=6)
 
-    ttk.Label(info, text="수량(Qty)").grid(row=1, column=2, sticky="e", padx=6, pady=6)
+    ttk.Label(info, text=f"{headers.get('qty', 'Qty')}").grid(row=1, column=2, sticky="e", padx=6, pady=6)
     fields["qty"] = tk.StringVar(value=str(item["qty"]))
     _numeric_entry(info, fields["qty"], width=18, allow_decimal=False).grid(
         row=1, column=3, sticky="ew", padx=6, pady=6)
 
-    ttk.Label(info, text="가능여부").grid(row=2, column=0, sticky="e", padx=6, pady=6)
+    ttk.Label(info, text=headers.get("possible", "가능여부")).grid(row=2, column=0, sticky="e", padx=6, pady=6)
     fields["possible"] = tk.StringVar(value=item["possible"])
     ttk.Combobox(info, textvariable=fields["possible"], values=["가능", "불가", "검토필요"],
                  state="readonly", width=15).grid(row=2, column=1, sticky="w", padx=6, pady=6)
@@ -464,14 +465,19 @@ def open_item_popup(app, no):
             return True
         return any(var.get() != initial_snapshot[key] for key, var in fields.items())
 
-    def close_on_escape(event=None):
+    def close_popup(event=None):
         if has_unsaved_changes() and not messagebox.askyesno(
                 "입력 확인", "저장하지 않은 변경 사항이 있습니다.\n저장하지 않고 닫으시겠습니까?", parent=popup):
             return
+        if not has_item_data(item):
+            app.data = [row for row in app.data if row["no"] != no]
+            app.selected_nos.discard(no)
+            app.save_session()
+            app.refresh_table(True)
         popup.destroy()
 
-    popup.bind("<Escape>", close_on_escape)
-
+    popup.bind("<Escape>", close_popup)
+    popup.protocol("WM_DELETE_WINDOW", close_popup)
     def save_and_close(next_item=False):
         if not fields["part_no"].get().strip() or not fields["part_name"].get().strip():
             messagebox.showerror("입력 오류", "품번과 품명은 필수 입력 항목입니다.", parent=popup)

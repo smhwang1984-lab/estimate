@@ -579,6 +579,46 @@ def open_settings_dialog(app):
               text="견적 날짜는 저장하는 날짜(yyyy-mm-dd)로 자동으로 들어갑니다.",
               style="Muted.TLabel", wraplength=380, justify="left").pack(anchor="w", pady=(12, 0))
 
+    # ---------- 4) 화면 열 ----------
+    column_tab = ttk.Frame(notebook, padding=14)
+    notebook.add(column_tab, text="화면 열")
+    ttk.Label(column_tab,
+              text="현황판과 출력 양식에 표시할 서술 열 제목을 바꿉니다. No, SUM, 단가, 최종단가는 계산 기준이라 고정입니다.",
+              style="Muted.TLabel", wraplength=820, justify="left").pack(anchor="w", pady=(0, 12))
+
+    header_fields = [
+        ("model", "기종"), ("part_no", "품번"), ("part_name", "품명"),
+        ("comment", "Coment"), ("possible", "가능여부"), ("qty", "Qty"),
+        ("material", "Material"), ("heat", "열처리"), ("size", "Size"),
+    ]
+    header_box = ttk.LabelFrame(column_tab, text="열 제목", padding=10)
+    header_box.pack(fill=tk.X)
+    header_vars = {}
+    for idx, (key, label) in enumerate(header_fields):
+        row, col = divmod(idx, 3)
+        ttk.Label(header_box, text=label).grid(row=row, column=col * 2, sticky="e", padx=(8, 6), pady=5)
+        header_vars[key] = tk.StringVar(value=str(current.get("headers", {}).get(key, label)))
+        ttk.Entry(header_box, textvariable=header_vars[key], width=20).grid(
+            row=row, column=col * 2 + 1, sticky="ew", padx=(0, 10), pady=5)
+    for col in (1, 3, 5):
+        header_box.columnconfigure(col, weight=1)
+
+    def reset_headers():
+        for key, label in header_fields:
+            header_vars[key].set(settings_store.DEFAULT_HEADERS[key])
+
+    def reset_widths():
+        app.reset_column_widths()
+        messagebox.showinfo("열 폭 초기화", "대시보드 열 폭을 기본값으로 되돌렸습니다.", parent=dialog)
+
+    reset_row = ttk.Frame(column_tab, padding=(0, 12, 0, 0))
+    reset_row.pack(fill=tk.X)
+    ttk.Button(reset_row, text="열 제목 기본값", command=reset_headers).pack(side=tk.LEFT, padx=(0, 6))
+    ttk.Button(reset_row, text="열 폭 기본값", command=reset_widths).pack(side=tk.LEFT, padx=6)
+    ttk.Button(reset_row, text="열 제목·폭 모두 기본값", command=lambda: (reset_headers(), reset_widths())).pack(side=tk.LEFT, padx=6)
+    ttk.Label(column_tab,
+              text=f"열 폭이 망가져 설정 버튼을 누르기 어렵다면 {settings_store.get_settings_path()} 파일을 삭제하면 기본값으로 복구됩니다.",
+              style="Muted.TLabel", wraplength=820, justify="left").pack(anchor="w", pady=(12, 0))
     # ---------- 6) 데이터 위치 (v0.1.4) ----------
     # 이 탭만 '저장' 버튼과 무관하게 즉시 적용된다. 폴더를 바꾸는 순간 다른 탭이 들고 있는
     # 값(옛 폴더에서 읽은 단가 등)이 통째로 낡기 때문에, 적용하면 이 창을 닫고 새로 열게 한다.
@@ -610,6 +650,17 @@ def open_settings_dialog(app):
                                      parent=dialog)
                 return
             rates[key] = value
+        headers = {key: header_vars[key].get().strip() for key, _ in header_fields}
+        if any(not value for value in headers.values()):
+            messagebox.showerror("입력 오류", "열 제목은 비워 둘 수 없습니다.", parent=dialog)
+            return
+        if len(set(headers.values())) != len(headers):
+            messagebox.showerror("입력 오류", "열 제목은 서로 중복될 수 없습니다.", parent=dialog)
+            return
+        reserved = {"No", "SUM", "단가", "최종단가"}
+        if any(value in reserved for value in headers.values()):
+            messagebox.showerror("입력 오류", "No, SUM, 단가, 최종단가는 고정 제목이라 사용할 수 없습니다.", parent=dialog)
+            return
         densities = []
         for iid in density_tree.get_children():
             name, value = density_tree.item(iid, "values")
@@ -627,6 +678,7 @@ def open_settings_dialog(app):
             "company": {key: company_vars[key].get().strip() for key, _, _ in COMPANY_FIELDS},
             "client": {key: client_vars[key].get().strip() for key, _, _ in CLIENT_FIELDS},
             "supplier": {key: supplier_vars[key].get().strip() for key, _, _ in SUPPLIER_FIELDS},
+            "headers": headers,
             # 이 창에서는 열 폭을 다루지 않으니 지금 값을 그대로 넘긴다(요청 3-3, table.py에서 고침).
             "col_widths": current.get("col_widths", {}),
             "lathe_machine": lathe_machine,
@@ -653,8 +705,27 @@ def open_settings_dialog(app):
     ttk.Label(buttons, text=f"저장 위치: {settings_store.get_settings_path()}",
               style="Muted.TLabel", wraplength=520, justify="left").pack(side=tk.LEFT)
     ttk.Button(buttons, text="저장", command=save_and_close).pack(side=tk.RIGHT, padx=4)
-    ttk.Button(buttons, text="취소", command=dialog.destroy).pack(side=tk.RIGHT, padx=4)
-    dialog.bind("<Escape>", lambda event: dialog.destroy())
+    def current_snapshot():
+        return {
+            "rates": {key: rate_vars[key].get() for key, _ in machine_fields},
+            "materials": list(material_list.get(0, tk.END)),
+            "company": {key: company_vars[key].get() for key, _, _ in COMPANY_FIELDS},
+            "client": {key: client_vars[key].get() for key, _, _ in CLIENT_FIELDS},
+            "supplier": {key: supplier_vars[key].get() for key, _, _ in SUPPLIER_FIELDS},
+            "headers": {key: header_vars[key].get() for key, _ in header_fields},
+        }
+
+    initial_snapshot = current_snapshot()
+
+    def close_dialog(event=None):
+        if current_snapshot() != initial_snapshot and not messagebox.askyesno(
+                "설정 확인", "저장하지 않은 변경 사항이 있습니다.\n저장하지 않고 닫으시겠습니까?", parent=dialog):
+            return
+        dialog.destroy()
+
+    ttk.Button(buttons, text="취소", command=close_dialog).pack(side=tk.RIGHT, padx=4)
+    dialog.bind("<Escape>", close_dialog)
+    dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
     app.root.wait_window(dialog)
     return result["saved"]

@@ -120,6 +120,17 @@ DEFAULT_MATERIALS = [
     "Ti-6AL-4V SAE-AMS4911",
     "PEEK",
 ]
+DEFAULT_HEADERS = {
+    "model": "기종",
+    "part_no": "품번",
+    "part_name": "품명",
+    "comment": "Coment",
+    "possible": "가능여부",
+    "qty": "Qty",
+    "material": "Material",
+    "size": "Size",
+    "heat": "열처리",
+}
 
 # v0.1.1: 가공조건 산출기(Mill/Lathe) 기본값. `core/machining.py`가 계산만 하고,
 # 어떤 장비·재질을 쓰는지는 여기(설정)가 정한다 -- v0.1.0의 densities와 같은 자리다.
@@ -397,6 +408,7 @@ def load():
         "mill_materials": _clean_material_rows(
             payload.get("mill_materials", DEFAULT_MILL_MATERIALS),
             DEFAULT_MILL_MATERIALS, MILL_MATERIAL_NUMERIC_FIELDS),
+        "headers": _merged(DEFAULT_HEADERS, payload.get("headers")),
     }
 
 
@@ -426,6 +438,7 @@ def save(data, force=False):
             data.get("lathe_materials"), DEFAULT_LATHE_MATERIALS, LATHE_MATERIAL_NUMERIC_FIELDS),
         "mill_materials": _clean_material_rows(
             data.get("mill_materials"), DEFAULT_MILL_MATERIALS, MILL_MATERIAL_NUMERIC_FIELDS),
+        "headers": _merged(DEFAULT_HEADERS, data.get("headers")),
     }
     # 임시 파일에 다 쓴 뒤 바꿔치기한다(네트워크 폴더에서 잘린 파일이 남지 않게).
     return datastore.write_json_atomic(get_settings_path(), payload)

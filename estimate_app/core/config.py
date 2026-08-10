@@ -60,8 +60,8 @@ DEFAULT_FONTS = {
 }
 
 DEFAULT_LAYOUT = {
-    "window_size": "1380x760",
-    "min_width": 1320,
+    "window_size": "1460x780",
+    "min_width": 1420,
     "min_height": 680,
     "checkbox_size": 26,
     "page_size": 40,
@@ -78,6 +78,7 @@ DEFAULT_LAYOUT = {
     # 여유가 있던 금액 칸에서 같은 만큼 덜어 전체 폭 합계는 그대로 뒀다(1억 단위까지도
     # 120px에 들어가는 것을 실측해 확인함).
     "col_material_width": 150,
+    "col_heat_width": 100,
     "col_size_width": 150,
     "col_status_width": 100,
     "col_price_width": 120,

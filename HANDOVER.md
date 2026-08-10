@@ -390,3 +390,19 @@ v0.1.1의 **가공조건 산출기는 카드를 읽기만 한다**는 것도 기
 확인부터 할 것. 밀링 재질별 절삭조건(`core/settings.DEFAULT_MILL_MATERIALS`)과 밀링 장비
 스펙(`DEFAULT_MILL_MACHINE`)은 참고할 원본이 없어 잠정값이다 — 설정창 "가공 조건 > Mill"
 탭에서 실측치로 고쳐 쓸 수 있게만 만들어 뒀다.
+
+## v0.1.5 검증 및 패키징 완료 (2026-08-10)
+
+- 소스 컴파일 및 v0.1.5 핵심 기능 스모크 테스트 통과.
+- PyInstaller onedir 빌드 성공: `dist\Estimate\Estimate.exe`.
+- Inno Setup 7 빌드 성공: `C:\Program Files\Inno Setup 7\ISCC.exe`.
+- 최종 설치 파일: `installer\Output\MachineEstimate_Setup_v0.1.5.exe`.
+- 설치 파일 저장 경로: `C:\Users\SumH\orca\workspaces\Estimate\Estimate\installer\Output`.
+- 설치 파일 크기: 9,654,231 bytes.
+- 주의: 무인 Tkinter 초기화 테스트는 예약된 데이터 위치/업데이트 확인 흐름에서 제한 시간 초과되어 GUI 통과로 기록하지 않음.
+## v0.1.5 통합 복구 점검 정정 (2026-08-10)
+
+- v0.1.4 기준선의 보관함·삭제/되돌리기·다중 업로드·가공조건·설정 보호 기능을 v0.1.5에 통합했다.
+- 컴파일, 핵심 스모크, 설정 왕복, 가공조건 계산, 사용자 지정 엑셀 헤더 왕복 테스트는 통과했다.
+- 통합 후 v0.1.5 설치 파일은 아직 재빌드하지 않았다. 기존 설치 파일 기록은 통합 전 빌드 결과다.
+- GUI 무인 시작 검증은 사용자가 중단했으므로 통과로 기록하지 않는다.

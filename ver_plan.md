@@ -1210,3 +1210,61 @@
 - 다크 팔레트로 되돌리는 화면 내 전환 버튼은 만들지 않았다(요청에 없었고, `presets.dark` 값을 `theme.json`의 `colors`에 옮겨 쓰면 재빌드 없이 가능하다).
 - 행당 위젯 수를 16개에서 줄이는 것(계획서 7-2)은 실제로 시도하지 않았다 — 표 갱신 구조 재작성(반영 내용 5번)만으로 목표 성능을 이미 달성해 우선순위가 낮아졌다.
 - 기존 `견적_산정` 폴더의 과거 파일들(구버전 양식)은 원본을 손대지 않았다.
+
+### v0.1.2 구현 반영 기록 (Codex, 2026-08-10)
+
+- 40건 표시 제한을 제거하고 검색 결과/전체 항목을 모두 렌더링하도록 변경했다.
+- 항목 입력 팝업의 ESC와 X 닫기 경로를 동일하게 맞췄고, 저장 전 빈 신규 카드는 닫을 때 목록/세션에서 제거되도록 했다.
+- 현황판 소재와 사이즈 사이에 `열처리` 열을 추가하고 `HRC58~62`/`HRC`/`-` 형식으로 표시하도록 했다.
+- 설정 저장소에 `headers`, `columns.widths`를 추가해 열 제목과 사용자 조정 열 폭을 저장/로드하도록 했다.
+- 설정창에 `화면 열` 탭을 추가했다. 열 제목 9개를 수정할 수 있고, 열 제목/열 폭 초기화 버튼을 제공한다.
+- 헤더 열 경계에 드래그 핸들을 추가해 대시보드 열 폭을 조절하고, 마우스 버튼을 놓을 때 설정 파일에 저장하도록 했다.
+- 열 폭은 40~600px 범위로 제한하고, 현재 표 폭을 넘는 과도한 확장은 막도록 했다.
+- 엑셀 읽기에서는 기본 제목과 사용자 제목을 모두 인식하도록 했다.
+- 엑셀 출력에서는 기존 열 판정/값 쓰기/견적서 동기화가 끝난 뒤 마지막 단계에서 기계 시트 6행과 견적서 14행 제목을 사용자 제목으로 교체하도록 했다.
+- 버전을 `0.1.2`로 갱신했다 (`estimate_app/__init__.py`, `installer/Setup.iss`).
+
+### v0.1.2 검증 기록
+
+- `python -m compileall -q estimate_app main.py` 통과.
+- 임시 엑셀 출력 검증 통과: 사용자 지정 제목(`MODELX`, `PARTX`, `NAMEX`)이 6행에 반영되고, 실제 값은 기존 열 위치에 유지됨을 확인했다.
+- 출력 파일을 `read_cards_from_workbook()`으로 다시 읽어 1건 왕복 로드가 되는 것을 확인했다.
+- `C:\tmp`에 대한 임시 파일 쓰기는 현재 세션에서 `PermissionError`가 발생해 작업 폴더 내부 임시 파일로 검증 후 삭제했다.
+
+### v0.1.2 빌드 기록
+
+- 최초 `python -m PyInstaller Machine_Estimate.spec` 실행은 기존 `dist\Estimate` 폴더가 비어 있지 않아 PyInstaller가 중단했다.
+- `python -m PyInstaller -y Machine_Estimate.spec`로 기존 빌드 산출물 폴더를 교체하며 재빌드했고 성공했다.
+- 결과 위치: `dist\Estimate\Estimate.exe`.
+- GUI 실행 시작 확인: `dist\Estimate\Estimate.exe`를 5초간 실행했으며 즉시 종료되지 않았다 (`started=True`). 확인 후 프로세스는 종료했다.
+- 설치 파일 생성은 진행하지 못했다. `ISCC.exe`가 표준 설치 경로와 PATH에서 확인되지 않았다.
+
+## 2026-08-10 v0.1.5 버전 정정 및 설치 파일 생성 기록
+
+- v0.1.2로 표기했던 이번 작업 버전을 기존 배포 흐름(v0.1.4 이후)에 맞춰 `v0.1.5`로 정정했다.
+- 수정 파일: `estimate_app\__init__.py`의 `APP_VERSION`, `installer\Setup.iss`의 `MyAppVersion`.
+- `python -m compileall -q estimate_app main.py` 통과.
+- `python -m PyInstaller -y Machine_Estimate.spec`로 `dist\Estimate\Estimate.exe`를 다시 빌드했다.
+- Inno Setup 7 경로 `C:\Program Files\Inno Setup 7\ISCC.exe`로 설치 파일을 다시 생성했다.
+- 생성 파일: `installer\Output\MachineEstimate_Setup_v0.1.5.exe`.
+- 결과: Inno Setup `Successful compile` 확인.
+- 파일 크기: 9,577,766 bytes.
+
+
+## 2026-08-10 v0.1.5 검증 및 패키징 재실행 기록
+
+- `python -m compileall -q estimate_app main.py` 통과.
+- v0.1.5 핵심 스모크 테스트 통과: 버전, 열처리 열, 카드 삭제/되돌리기, 다중 엑셀 업로드, 견적 보관함, 가공조건 창, 팝업 진입점.
+- Tkinter 화면 초기화는 예약된 데이터 위치/업데이트 확인 흐름까지 포함한 무인 테스트에서 제한 시간 내 완료되지 않아 GUI 통과로 판정하지 않았다.
+- `python -m PyInstaller --noconfirm --clean Machine_Estimate.spec` 성공.
+- `C:\Program Files\Inno Setup 7\ISCC.exe installer\Setup.iss` 성공.
+- 최종 설치 파일: `installer\Output\MachineEstimate_Setup_v0.1.5.exe` (9,654,231 bytes).
+- 설치 파일 출력 경로: `C:\Users\SumH\orca\workspaces\Estimate\Estimate\installer\Output`.
+## 2026-08-10 v0.1.4 기능 보존을 위한 v0.1.5 통합 복구
+
+- 사용자의 v0.1.4 기능 누락 보고 후 원인을 점검하고, 승인받은 복구 계획에 따라 v0.1.4 기준선과 v0.1.5 변경사항을 통합했다.
+- 보관함, 삭제/되돌리기, 다중 엑셀 업로드, 가공조건, 설정 저장 보호, 엑셀 입출력 기능을 보존했다.
+- v0.1.5 열처리 열, 사용자 지정 화면 열 이름, 열 너비 저장, 설정창 화면 열 탭을 함께 유지했다.
+- 컴파일, 핵심 스모크, 설정 스키마 왕복, 가공조건 계산, 사용자 지정 엑셀 헤더 왕복 테스트 통과.
+- Tkinter GUI 무인 시작 검증은 사용자가 중단하여 미통과로 기록한다.
+- 통합 후 설치 파일 재빌드는 아직 남아 있다. 기존 설치 파일은 통합 전 빌드 결과이므로 최종 산출물로 판정하지 않는다.

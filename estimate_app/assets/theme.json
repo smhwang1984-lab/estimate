@@ -63,8 +63,8 @@
     "badge_px": 14
   },
   "layout": {
-    "window_size": "1380x760",
-    "min_width": 1320,
+    "window_size": "1460x780",
+    "min_width": 1420,
     "min_height": 680,
     "checkbox_size": 26,
     "page_size": 40,
@@ -77,6 +77,7 @@
     "col_partname_width": 220,
     "col_comment_width": 170,
     "col_material_width": 150,
+    "col_heat_width": 100,
     "col_size_width": 150,
     "col_status_width": 100,
     "col_price_width": 120

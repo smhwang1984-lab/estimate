@@ -15,7 +15,7 @@ from .condition_dialog import open_condition_dialog
 from .library_dialog import open_library_dialog
 from .popup import open_item_popup
 from .settings_dialog import open_settings_dialog
-from .table import (COLUMNS, build_header, build_header_underline, create_row_slot,
+from .table import (COLUMNS, build_header, build_header_underline, configure_columns, create_row_slot,
                     hide_row_slot, paint_checkbox, render_empty_message, update_row_slot)
 from .theme import Theme
 
@@ -58,6 +58,9 @@ class EstimateApp:
         self.more_button_frame = None
         self.more_button = None
         self.empty_frame = None
+        self.table_header = None
+        self.header_labels = {}
+        self.header_resize_handles = []
         self.open_popups = {}
         self.settings_window = None
         # v0.1.4: 견적 보관함(core/library.py). 방금 불러오거나 저장한 견적이 무엇인지
@@ -101,6 +104,7 @@ class EstimateApp:
     # ---------- 창 기본 동작 ----------
 
     def on_close(self):
+        self.save_column_settings()
         self.save_session()
         self.root.destroy()
 
@@ -326,13 +330,41 @@ class EstimateApp:
             f"네트워크 연결을 확인한 뒤 프로그램을 다시 켜거나, [설정 > 데이터 위치]에서"
             f" 폴더를 다시 지정해 주세요.")
 
+
+    # ---------- 열 제목 / 열 폭 ----------
+
+    def update_header_labels(self):
+        mapping = {
+            "model": "기종", "part_no": "품번", "part_name": "품명",
+            "comment": "Coment", "material": "Material", "heat": "열처리",
+            "size": "Size", "possible": "가능여부",
+        }
+        headers = self.settings.get("headers", {})
+        for key, default in mapping.items():
+            label = self.header_labels.get(key)
+            if label is not None:
+                label.configure(text=headers.get(key, default))
+
     def apply_settings(self, new_settings):
-        """설정창에서 저장한 값을 화면 전체에 반영한다(요청 6-1)."""
+        """설정창에서 저장한 값을 화면 전체에 반영한다."""
         self.settings = new_settings
         self.rates = new_settings["rates"]
-        # 단가가 바뀌면 모든 카드의 금액이 달라지므로 표와 요약줄을 다시 계산한다.
+        from .table import _apply_column_widths
+        self.update_header_labels()
+        _apply_column_widths(self)
         self.refresh_table(False)
 
+    def save_column_settings(self):
+        from .table import _persist_column_widths
+        _persist_column_widths(self)
+
+    def reset_column_widths(self):
+        self.col_widths = {}
+        self.col_width_overridden = set()
+        from .table import _apply_column_widths
+        _apply_column_widths(self)
+        self.save_column_settings()
+        self.refresh_table(False)
     # ---------- 세션 ----------
 
     def save_session(self):
@@ -374,7 +406,6 @@ class EstimateApp:
         self.search_after_id = self.root.after(250, lambda: self.refresh_table(True))
 
     def show_more_cards(self):
-        self.display_limit += self.display_page_size
         self.refresh_table(False)
 
     def _summary_text(self, all_items, visible_items, query):
@@ -419,8 +450,6 @@ class EstimateApp:
         업로드 등). 그때만 스크롤을 맨 위로 되돌린다 — 더보기·체크 토글에서 스크롤이
         튀면 오히려 불편하기 때문이다.
         """
-        if reset_limit:
-            self.display_limit = self.display_page_size
         self.search_after_id = None
 
         query = self.get_search_text()
@@ -445,7 +474,7 @@ class EstimateApp:
             return
 
         self._hide_empty()
-        shown = visible_items[:self.display_limit]
+        shown = visible_items
         while len(self.row_slots) < len(shown):
             self.row_slots.append(create_row_slot(self))
 
@@ -460,11 +489,7 @@ class EstimateApp:
             self.no_to_slot[item["no"]] = slot
         for slot in self.row_slots[len(shown):]:
             hide_row_slot(slot)
-
-        if self.display_limit < len(visible_items):
-            self._show_more_button(len(shown), len(visible_items))
-        else:
-            self._hide_more_button()
+        self._hide_more_button()
 
         if reset_limit:
             self.row_canvas.yview_moveto(0)

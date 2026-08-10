@@ -127,8 +127,9 @@ def _get_sheet(wb, name):
 
 # ---------- 열 위치 판단 ----------
 
-def resolve_columns(ws):
+def resolve_columns(ws, headers=None):
     """6행 헤더 문구를 읽어 이 파일의 실제 열 배치를 돌려준다."""
+    headers = headers or {}
     texts = {}
     for col in range(1, 41):
         value = ws.cell(row=HEADER_ROW, column=col).value
@@ -136,10 +137,14 @@ def resolve_columns(ws):
             texts[col] = str(value).strip()
 
     def find_exact(*labels):
+        normalized = {str(label).strip() for label in labels if label not in (None, "")}
         for col in sorted(texts):
-            if texts[col] in labels:
+            if texts[col] in normalized:
                 return col
         return None
+
+    def label_for(key, *defaults):
+        return tuple(defaults) + (headers.get(key),)
 
     used = set()
 
@@ -157,14 +162,14 @@ def resolve_columns(ws):
         machine[key] = find_contains(*keywords)
 
     return {
-        "model": find_exact("기종"),
-        "part_no": find_exact("품번"),
-        "part_name": find_exact("품명"),
-        "comment": find_exact("Coment", "Comment"),
-        "possible": find_exact("가능여부"),
-        "qty": find_exact("Qty"),
-        "material": find_exact("Material"),
-        "size": find_exact("Size"),
+        "model": find_exact(*label_for("model", "기종")),
+        "part_no": find_exact(*label_for("part_no", "품번")),
+        "part_name": find_exact(*label_for("part_name", "품명")),
+        "comment": find_exact(*label_for("comment", "Coment", "Comment")),
+        "possible": find_exact(*label_for("possible", "가능여부")),
+        "qty": find_exact(*label_for("qty", "Qty")),
+        "material": find_exact(*label_for("material", "Material")),
+        "size": find_exact(*label_for("size", "Size")),
         "unit_price": find_exact("단가"),
         "final_price": find_exact("최종단가"),
         "sum": find_exact("SUM"),
@@ -522,7 +527,7 @@ def read_cards_from_workbook(file_path):
     """업로드한 기계 시트에서 입력된 행만 카드로 읽어 온다."""
     wb = _openpyxl().load_workbook(file_path, data_only=False)
     ws = _get_sheet(wb, SHEET_NAME)
-    cols = resolve_columns(ws)
+    cols = resolve_columns(ws, settings_store.load().get("headers"))
     summary_row = find_summary_row(ws, cols)
     abs_path = os.path.abspath(file_path)
     created_at = datetime.fromtimestamp(os.path.getmtime(abs_path)).strftime("%Y-%m-%d")
@@ -696,6 +701,27 @@ def widen_price_columns(ws, cols):
             ws.column_dimensions[letter].width = PRICE_COL_WIDTH
 
 
+
+def apply_custom_headers(wb, ws, cols, config_values):
+    """값 쓰기와 견적서 동기화가 끝난 뒤 사용자 지정 열 제목을 마지막에 반영한다."""
+    headers = config_values.get("headers", {}) if isinstance(config_values, dict) else {}
+    header_map = {
+        "model": "model", "part_no": "part_no", "part_name": "part_name", "comment": "comment",
+        "possible": "possible", "qty": "qty", "material": "material", "size": "size",
+    }
+    for key, col_key in header_map.items():
+        col = cols.get(col_key)
+        value = headers.get(key)
+        if col and value:
+            ws.cell(row=HEADER_ROW, column=col).value = value
+    if ESTIMATE_SHEET_NAME in wb.sheetnames:
+        es = wb[ESTIMATE_SHEET_NAME]
+        if headers.get("part_no"):
+            es["C14"] = headers["part_no"]
+        if headers.get("part_name"):
+            es["E14"] = headers["part_name"]
+
+
 def export_items(items, rates, output_path, config_values=None):
     """빈 양식에 선택한 카드만 담아 별도 파일로 저장한다.
 
@@ -710,5 +736,6 @@ def export_items(items, rates, output_path, config_values=None):
     date_text = write_machine_footer(ws, summary_row, config_values)
     if ESTIMATE_SHEET_NAME in wb.sheetnames:
         write_estimate_header(wb[ESTIMATE_SHEET_NAME], config_values, date_text)
+    apply_custom_headers(wb, ws, cols, config_values)
     wb.save(output_path)
     return saved_count
