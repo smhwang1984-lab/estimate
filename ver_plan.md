@@ -1452,3 +1452,41 @@
 ### 승인 대기
 
 - 위 범위대로 진행하려면 사용자 최종 승인이 필요하다.
+
+## 2026-08-12 v0.1.6 Git commit/push 완료 기록
+
+### 수행 결과
+
+- 대상 체크아웃: `C:\Users\SumH\orca\workspaces\Estimate\Estimate`
+- 대상 브랜치: `Estimate`
+- 원격: `origin https://github.com/smhwang1984-lab/estimate.git`
+- 승인된 7개 파일만 staging 했다.
+  - `estimate_app/__init__.py`
+  - `estimate_app/ui/popup.py`
+  - `estimate_app/ui/table.py`
+  - `installer/Setup.iss`
+  - `plan.md`
+  - `ver_plan.md`
+  - `견적_산정/양식/견적용.xlsx`
+- 제외 유지:
+  - `CLAUDE.md`
+  - `선택견적_2026-08-09.xlsx`
+
+### 검증
+
+- `git diff --cached --name-status`: 승인된 7개 파일만 포함됨.
+- `git diff --cached --check`: 통과.
+- `python -m compileall -q estimate_app main.py`: 통과.
+- 최종 설치 파일 확인:
+  - `installer\Output\MachineEstimate_Setup_v0.1.6.exe`
+  - 크기: `9,664,998 bytes`
+  - SHA-256: `7ACB6520E86FB9CF182C50171E8F3E60DD789CFD6D1BA8FD735407446993ADAE`
+
+### Git 결과
+
+- 기능/빌드 관련 커밋: `2578650c72367052e4ee772a0b709c5ea9209fff`
+- 커밋 메시지: `Finalize Estimate v0.1.6 installer`
+- `git push --dry-run --porcelain origin Estimate`: 성공.
+- `git push origin Estimate`: 성공.
+- push 직후 `HEAD`와 `@{upstream}`은 `2578650c72367052e4ee772a0b709c5ea9209fff`로 일치했고 ahead/behind는 `0 0`이었다.
+- 이 완료 기록은 별도 문서 후속 커밋으로 남긴다.
