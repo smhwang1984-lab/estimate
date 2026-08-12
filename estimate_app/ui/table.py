@@ -159,8 +159,11 @@ def build_header(parent, app):
             anchor = "center"
         else:
             anchor = "w"
+        # 헤더와 데이터 행은 별도의 grid 컨테이너다. 제목 글자 자체의 요구 폭이
+        # 열 최소 폭보다 커지면 양쪽 컨테이너의 경계가 달라질 수 있으므로, 요청 폭은
+        # 한 글자로 제한하고 실제 폭은 configure_columns()가 단일 기준으로 정한다.
         label = tk.Label(header, text=title, bg=c["th_bg"], fg=c["th_fg"], font=theme.table_head,
-                         anchor=anchor)
+                         anchor=anchor, width=1)
         label.grid(row=0, column=idx, sticky="ew", padx=pad_x, pady=pad_y)
         if header_key:
             app.header_labels[header_key] = label
@@ -205,6 +208,7 @@ def _reposition_resizers(header, handles):
             continue
         x, _y, w, _h = bbox
         handle.place(x=x + w - 1, y=0, width=2, relheight=1.0)
+        handle.lift()
 
 
 def _add_column_resizers(app, header):
@@ -298,7 +302,9 @@ def create_row_slot(app):
         return widget
 
     def label(column, font, anchor="w", fg=c["text"]):
-        widget = tk.Label(row, bg=c["row_bg"], fg=fg, font=font, anchor=anchor)
+        # 헤더와 같은 이유로 텍스트 길이가 열 경계를 밀지 않게 한다. 긴 값은
+        # update_row_slot()에서 열 폭에 맞춰 말줄임 처리한다.
+        widget = tk.Label(row, bg=c["row_bg"], fg=fg, font=font, anchor=anchor, width=1)
         slot["tinted"].append(widget)
         place(widget, column)
         return widget
@@ -316,6 +322,8 @@ def create_row_slot(app):
 
     # 품번 (저장 전이면 NEW 배지) + 그 아래 작성일
     partno_box = tk.Frame(row, bg=c["row_bg"])
+    # 품번/날짜의 내용 길이가 독립된 행 grid의 열 폭을 넓혀 헤더와 어긋나지 않게 한다.
+    partno_box.grid_propagate(False)
     slot["partno_box"] = partno_box
     slot["tinted"].append(partno_box)
     place(partno_box, COL_PARTNO)
@@ -340,7 +348,7 @@ def create_row_slot(app):
     slot["size_label"] = label(COL_SIZE, theme.table_cell, fg=c["muted"])
 
     # 가능여부 배지는 자기 색(성공/경고/위험)을 유지해야 하므로 hover 시 물드는 tinted에서 뺀다.
-    slot["status_label"] = place(tk.Label(row, font=theme.badge_bold, padx=8, pady=2),
+    slot["status_label"] = place(tk.Label(row, font=theme.badge_bold, padx=8, pady=2, width=1),
                                  COL_STATUS, sticky="")
 
     # 최종단가 (오른쪽 정렬). 자릿수가 맞아 보이도록 고정폭 글꼴(num_family)을 쓴다.
@@ -400,6 +408,7 @@ def update_row_slot(app, slot, item, row_index):
     material_width = app.col_widths.get("col_material_width", theme.layout["col_material_width"])
     usable = max(20, material_width - 2 * theme.layout["cell_pad_x"])
     slot["material_label"].configure(text=fit_text(theme, item["material"] or "-", usable))
+    slot["heat_label"].configure(text=hrc_text(item) or "-")
     slot["size_label"].configure(text=shorten(item["size"] or "-", 17))
 
     status_bg, status_fg, _ = theme.get_status_colors(item["possible"])

@@ -1275,3 +1275,180 @@
 - 로컬 `Estimate` 브랜치를 신규 원격 브랜치 `origin/Estimate`로 push하고 추적 관계를 설정했다.
 - 통합 복구 커밋 `b4d6445`의 로컬/원격 해시가 일치함을 확인했다.
 - 미추적 사용자 파일 `CLAUDE.md`, `선택견적_2026-08-09.xlsx`는 커밋과 push에서 제외했다.
+
+## 2026-08-10 입력창 종료 및 대시보드 열 표시 복구 계획 (승인 대기)
+
+### 대상 결함
+
+- 견적 항목 입력창의 `Esc`와 창 `X`가 동작하지 않아 저장해야만 종료되는 문제.
+- 대시보드 제목 열의 구분과 데이터 열 배치가 맞지 않는 문제.
+- 대시보드 `열처리` 열이 빈칸으로 표시되는 문제.
+
+### 확인된 코드 상태
+
+- `popup.py`에는 `Esc`·`WM_DELETE_WINDOW` 바인딩이 있으므로 공통 종료 콜백과 modal grab을
+  실제 실행 상태에서 추적해야 한다.
+- `table.py`의 `heat_label`은 생성되지만 `update_row_slot()`에서 텍스트를 넣지 않는다.
+- 헤더/행이 같은 최소 폭 값을 쓰더라도 별도 `grid`의 내용 요구 폭 때문에 실제 경계가
+  달라질 수 있고, 헤더 구분선은 그 경계를 따라 별도로 재배치된다.
+
+### 승인 후 작업
+
+1. `Esc`·`X`·새 `취소/닫기` 버튼을 하나의 안전한 종료 함수로 통합한다.
+2. 미저장 확인의 취소/폐기, 신규 빈 카드 정리, 기존 카드 원본 보존, grab 해제와
+   `app.open_popups` 정리를 보장한다.
+3. 헤더와 행 슬롯에 동일한 실제 픽셀 폭을 적용하고 제목 구분선을 정확한 경계에 표시한다.
+4. 열 폭 드래그 및 저장/복원 기능은 보존하고 긴 값은 열 폭을 밀지 않도록 셀 안에서 줄인다.
+5. `heat_label`을 `hrc_text()` 결과로 갱신해 없음은 `-`, 있음은 HRC 범위로 표시한다.
+6. 슬롯 재사용·검색·정렬·더보기에서도 열처리 값과 열 정렬이 어긋나지 않게 한다.
+
+### 승인 후 검증
+
+- 기존/신규 카드와 무수정/수정 상태를 나눠 `Esc`, `X`, `취소/닫기`, 저장 동작을 실제 GUI에서 확인한다.
+- 종료 뒤 grab과 열린 팝업 등록이 남지 않는지 확인한다.
+- 기본 폭/저장 폭/드래그 전후/재시작 후 헤더와 데이터 행의 열 경계를 좌표로 비교한다.
+- 열처리 없음·단일 경도·범위 경도·슬롯 재사용 표시를 확인한다.
+- 실제 창 캡처를 확인한 뒤 문법 검사, 회귀 검사, PyInstaller, v0.1.5 설치 파일 순서로 진행한다.
+
+### 보존 경계와 현재 상태
+
+- 엑셀 양식·계산, 보관함, 공유 폴더, 검색/정렬, 삭제/되돌리기는 변경하지 않는다.
+- 버전 번호는 `v0.1.5`로 유지한다.
+- 사용자 수정 중인 양식과 미추적 파일은 건드리지 않는다.
+- 현재는 계획 문서만 추가했으며 소스와 빌드 산출물은 변경하지 않았다.
+- 사용자 승인 대기 중이다.
+
+## 2026-08-10 v0.1.6 입력창 종료 및 대시보드 열 표시 복구 완료
+
+### 승인 및 변경 파일
+
+- 사용자 승인에 따라 버전을 `v0.1.6`으로 올려 빌드했다.
+- 변경: `estimate_app/ui/popup.py`, `estimate_app/ui/table.py`,
+  `estimate_app/__init__.py`, `installer/Setup.iss`.
+- 계획·검증 기록: 이 문서 및 `plan.md`.
+- 사용자 수정 중인 `견적_산정\양식\견적용.xlsx`와 미추적 사용자 파일은 건드리지 않았다.
+
+### 수정 내용
+
+1. `popup.py`
+   - `close_popup()`에서 쓰지만 import하지 않았던 `has_item_data`를 가져왔다.
+     이 누락이 `Esc`와 `X` 종료를 막던 직접 원인이었다.
+   - `Esc`, `WM_DELETE_WINDOW(X)`, `취소/닫기` 버튼을 공통 종료 경로에 연결했다.
+   - 미저장 변경 확인, 신규 빈 카드 정리, 기존 카드 원본 보존, popup 자체의 grab 해제를
+     안전하게 처리했다.
+2. `table.py`
+   - 헤더/행 라벨과 품번 묶음의 내용 요청 폭이 서로 다른 grid 열 폭을 만들지 않게 했다.
+   - 제목 열 구분선을 열 경계 최상단으로 다시 올렸다.
+   - 누락된 `heat_label` 갱신을 추가해 `hrc_text()` 결과 또는 `-`를 표시한다.
+3. 버전
+   - `APP_VERSION = "0.1.6"`.
+   - Inno Setup `MyAppVersion = "0.1.6"`.
+
+### 검증 및 패키징 결과
+
+- `python -m compileall -q estimate_app main.py` 통과.
+- Tk 위젯 실측: 헤더와 데이터 행의 11개 열 폭이 `grid_bbox()`에서 모두 동일.
+- 열처리 `HRC58~62` / 없음 `-` 표기 확인.
+- 실제 Tk 팝업: 신규 카드 Esc 정리, 기존 카드 X 종료·보존, 수정 카드 Esc 폐기·원본 보존,
+  취소/닫기 버튼 동작 확인.
+- `python -m PyInstaller --noconfirm --clean Machine_Estimate.spec` 성공.
+- Inno Setup 6.7.3 `Successful compile`.
+- 번들 EXE 5초 실행 시작 확인 후 테스트 프로세스 종료.
+- 양식 원본과 번들 사본은 모두 22,460 bytes, SHA-256 일치.
+
+### 빌드 유의 사항
+
+- 기존 `build.bat setup`은 한글 인코딩 문제로 PyInstaller 단계를 신뢰할 수 없어, 이번에는
+  PyInstaller와 Inno Setup을 직접 실행했다.
+- 최종 설치 파일은 최신 소스와 사용자가 저장한 최신 양식을 포함한다.
+
+### 최종 산출물
+
+- `installer\Output\MachineEstimate_Setup_v0.1.6.exe`
+- 9,673,086 bytes
+
+## 2026-08-12 v0.1.6 최종 설치 파일 재구성 완료 기록
+
+### 실행 범위
+
+- 사용자 승인 후 실제 v0.1.6 소스가 있는 `C:\Users\SumH\orca\workspaces\Estimate\Estimate`에서만 빌드와 검증을 수행했다.
+- `C:\Users\SumH\Codex\Estimate`는 구형 v0.0.2 구조라서 빌드 대상으로 사용하지 않았다.
+- 기능/UI/버전 번호/사용자 데이터/Git 커밋/Git 푸시는 변경하지 않았다.
+
+### 수행 결과
+
+- `python -m compileall -q estimate_app main.py`: 성공.
+- `python -m PyInstaller --noconfirm --clean Machine_Estimate.spec`: 성공.
+- 생성 EXE:
+  - 경로: `dist\Estimate\Estimate.exe`
+  - 크기: `2,924,271 bytes`
+  - 수정 시각: `2026-08-12 18:42:16`
+  - SHA-256: `AF388F0572E1391AABD4A00795EBC1C0478B3E7FDE731D022DF36213FCF2A290`
+- EXE 실행 검증:
+  - 실제 실행 후 5초 대기.
+  - `HasExited = False`
+  - 창 제목: `Estimate(견적) v0.1.6`
+  - 테스트 프로세스만 종료했다.
+- 번들 양식 검증:
+  - 원본: `견적_산정\양식\견적용.xlsx`
+  - 번들: `dist\Estimate\_internal\견적용.xlsx`
+  - 두 파일 모두 `22,460 bytes`
+  - SHA-256 모두 `2921BEC93FA9E927A180EF5B9A1A223A8ECA234E11295F839369FC5DF9EC7D18`
+- `C:\Program Files\Inno Setup 7\ISCC.exe installer\Setup.iss`: 성공.
+- 최종 설치 파일:
+  - 경로: `installer\Output\MachineEstimate_Setup_v0.1.6.exe`
+  - 크기: `9,664,998 bytes`
+  - 수정 시각: `2026-08-12 18:43:41`
+  - SHA-256: `7ACB6520E86FB9CF182C50171E8F3E60DD789CFD6D1BA8FD735407446993ADAE`
+
+### 미수행 항목
+
+- 설치 파일을 실제로 실행해 설치하지 않았다.
+- 기존 설치본 제거, 배포 폴더 복사, commit, push는 수행하지 않았다.
+- 저장소의 기존 dirty 상태는 그대로 남겨 두었다.
+
+## 2026-08-12 v0.1.6 Git commit/push 계획 (승인 대기)
+
+### 요청
+
+- v0.1.6 설치 파일 빌드 완료 후 관련 변경을 Git commit/push 한다.
+- AGENTS 지침에 따라 실제 commit/push 전 계획을 남기고 최종 승인을 기다린다.
+
+### 현재 판단
+
+- 실제 v0.1.6 작업 대상은 이 체크아웃 `C:\Users\SumH\orca\workspaces\Estimate\Estimate`의 `Estimate` 브랜치다.
+- `C:\Users\SumH\Codex\Estimate`는 구형 v0.0.2 구조라서 이번 commit/push 대상이 아니다.
+- 현재 브랜치는 `origin/Estimate`와 같은 커밋 `9f6e09f254e29e06d009b751ea2560d06d00eadb`에서 시작했고 ahead/behind는 `0 0`이다.
+- GitHub CLI는 설치되어 있으나 `gh auth status`에서 keyring token invalid가 확인됐다. 실제 push는 `git push --dry-run --porcelain`으로 먼저 확인하고, 인증 실패 시 commit/push를 중단하고 보고한다.
+
+### 승인 후 포함할 파일
+
+- `estimate_app/__init__.py`
+- `estimate_app/ui/popup.py`
+- `estimate_app/ui/table.py`
+- `installer/Setup.iss`
+- `plan.md`
+- `ver_plan.md`
+- `견적_산정/양식/견적용.xlsx`
+
+### 승인 후 제외할 파일
+
+- `CLAUDE.md` 미추적 파일
+- `선택견적_2026-08-09.xlsx` 미추적 파일
+- `dist`, `build`, installer output 등 Git 추적 대상이 아닌 빌드 산출물
+
+### 승인 후 실행 계획
+
+1. status, diff, upstream, ahead/behind를 다시 확인한다.
+2. 명시한 7개 파일만 `git add -- <paths>`로 staging 한다.
+3. `git diff --cached --name-status`와 `git diff --cached --check`로 staging 범위를 검증한다.
+4. 필요한 경우 `python -m compileall -q estimate_app main.py`와 빌드 완료 산출물 존재/해시를 재확인한다.
+5. commit 메시지는 `Finalize Estimate v0.1.6 installer`로 사용한다.
+6. `git push --dry-run --porcelain origin Estimate`를 먼저 실행한다.
+7. dry-run 성공 시 `git push origin Estimate`를 실행한다.
+8. push 후 `origin/Estimate`와 local HEAD가 같은지, ahead/behind가 `0 0`인지 확인한다.
+9. 완료 결과와 커밋 해시를 `ver_plan.md`에 추가 기록한다.
+
+### 승인 대기
+
+- 위 범위대로 진행하려면 사용자 최종 승인이 필요하다.

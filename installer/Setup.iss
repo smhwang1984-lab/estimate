@@ -23,7 +23,7 @@
 
 #define MyAppName "Estimate(견적)"
 #define MyAppFolderName "Estimate"
-#define MyAppVersion "0.1.5"
+#define MyAppVersion "0.1.6"
 #define MyAppExeName "Estimate.exe"
 #define MyAppIconName "estimate.ico"
 #define MyOldAppExeName "Machine_Estimate.exe"

@@ -20,7 +20,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from ..core import config, settings as settings_store
-from ..core.model import calc_weight_kg, parse_number, parse_size
+from ..core.model import calc_weight_kg, has_item_data, parse_number, parse_size
 from ..core.pricing import calc_row
 from .condition_dialog import open_condition_dialog
 from .widgets import numeric_entry as _numeric_entry
@@ -465,18 +465,37 @@ def open_item_popup(app, no):
             return True
         return any(var.get() != initial_snapshot[key] for key, var in fields.items())
 
+    closing = False
+
     def close_popup(event=None):
+        """저장하지 않고 입력창을 닫는다.
+
+        Esc·창 X·하단 취소 버튼이 이 한 경로를 공유한다. 새 빈 카드는 목록에서 정리하되,
+        기존 카드에서 입력 중이던 값은 저장 전까지 item에 쓰지 않으므로 그대로 보존된다.
+        """
+        nonlocal closing
+        if closing or not popup.winfo_exists():
+            return "break"
         if has_unsaved_changes() and not messagebox.askyesno(
                 "입력 확인", "저장하지 않은 변경 사항이 있습니다.\n저장하지 않고 닫으시겠습니까?", parent=popup):
-            return
+            return "break"
+        closing = True
         if not has_item_data(item):
             app.data = [row for row in app.data if row["no"] != no]
             app.selected_nos.discard(no)
             app.save_session()
             app.refresh_table(True)
+        # popup 자체가 현재 modal grab을 잡고 있을 때만 푼다. 가공조건 산출기처럼
+        # 자식 창이 grab을 넘겨받은 상태는 건드리지 않는다.
+        try:
+            if popup.grab_current() is popup:
+                popup.grab_release()
+        except tk.TclError:
+            pass
         popup.destroy()
+        return "break"
 
-    popup.bind("<Escape>", close_popup)
+    popup.bind("<Escape>", close_popup, add="+")
     popup.protocol("WM_DELETE_WINDOW", close_popup)
     def save_and_close(next_item=False):
         if not fields["part_no"].get().strip() or not fields["part_name"].get().strip():
@@ -529,4 +548,5 @@ def open_item_popup(app, no):
     btns = ttk.Frame(frame)
     btns.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(18, 0))
     ttk.Button(btns, text="저장 후 다음 항목 입력", command=lambda: save_and_close(True)).pack(side=tk.LEFT)
+    ttk.Button(btns, text="취소/닫기", command=close_popup).pack(side=tk.RIGHT, padx=(0, 8))
     ttk.Button(btns, text="저장", command=lambda: save_and_close(False)).pack(side=tk.RIGHT)
