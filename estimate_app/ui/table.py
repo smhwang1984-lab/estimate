@@ -44,6 +44,7 @@ from ..core.pricing import calc_row
 from .widgets import make_checkbox
 
 MIN_COL_WIDTH = 40
+RESIZE_HANDLE_WIDTH = 7
 
 # (제목, 최소 폭 설정 키, 남는 폭을 가져가는 비율).
 # 비율이 0이면 최소 폭에 고정된다. 품명과 Comment만 늘어나며, 창이 넓을 때 품명 한 열이
@@ -121,6 +122,34 @@ def fit_text(theme, text, max_width_px):
     return text[:lo] + ellipsis
 
 
+def _fit_for_column(app, width_key, text):
+    """현재 열의 실제 설정 폭에 맞춰 한 줄 텍스트를 말줄임한다."""
+    width = app.col_widths.get(width_key, app.theme.layout[width_key])
+    usable = max(20, width - 2 * app.theme.layout["cell_pad_x"])
+    return fit_text(app.theme, text, usable)
+
+
+def _update_fitted_cell_text(app, slot, item):
+    """열 폭 변경을 데이터 글자에도 즉시 반영한다.
+
+    폭을 넓힌 뒤에도 예전 고정 글자 수로 잘린 문구가 남아 있으면 사용자는 열 조절이
+    반영되지 않은 것으로 보게 된다. 행을 통째로 다시 만들지 않고 폭의 영향을 받는 라벨만
+    갱신한다.
+    """
+    slot["model_label"].configure(text=_fit_for_column(
+        app, "col_model_width", item["model"] or "-"))
+    slot["partname_label"].configure(text=_fit_for_column(
+        app, "col_partname_width", item["part_name"] or "품명 미입력"))
+    slot["comment_label"].configure(text=_fit_for_column(
+        app, "col_comment_width", one_line(item.get("comment", "")) or "-"))
+    slot["material_label"].configure(text=_fit_for_column(
+        app, "col_material_width", item["material"] or "-"))
+    slot["heat_label"].configure(text=_fit_for_column(
+        app, "col_heat_width", hrc_text(item) or "-"))
+    slot["size_label"].configure(text=_fit_for_column(
+        app, "col_size_width", item["size"] or "-"))
+
+
 def configure_columns(container, app):
     """헤더와 각 행이 같은 열 폭을 쓰도록 동일한 규칙을 적용한다.
 
@@ -181,6 +210,9 @@ def _apply_column_widths(app):
         configure_columns(app.header_frame, app)
     for slot in getattr(app, "row_slots", []):
         configure_columns(slot["frame"], app)
+        item = slot.get("item")
+        if item is not None:
+            _update_fitted_cell_text(app, slot, item)
 
 
 def _persist_column_widths(app):
@@ -207,8 +239,32 @@ def _reposition_resizers(header, handles):
         if not bbox:
             continue
         x, _y, w, _h = bbox
-        handle.place(x=x + w - 1, y=0, width=2, relheight=1.0)
-        handle.lift()
+        handle.place(x=x + w - RESIZE_HANDLE_WIDTH // 2, y=0,
+                     width=RESIZE_HANDLE_WIDTH, relheight=1.0)
+        # Canvas.lift()는 위젯이 아니라 캔버스 내부 item을 올리는 메서드라 인수가 필요하다.
+        # Tk의 윈도우 raise 명령을 직접 써서 손잡이 위젯 자체를 제목 라벨 위로 올린다.
+        header.tk.call("raise", handle._w)
+
+
+def _capture_actual_column_widths(app, header):
+    """드래그 시작 시 화면에 보이는 폭을 고정 폭의 기준으로 삼는다.
+
+    품명과 Comment는 기본 상태에서 남는 공간을 비율로 나눠 갖기 때문에 설정의 최소 폭과
+    실제 화면 폭이 다르다. 최소 폭을 기준으로 드래그하면 선택한 경계가 갑자기 튀고 엉뚱한
+    열이 늘어난다. 현재 픽셀 폭을 먼저 모두 저장해 그 상태에서 이어서 조절한다.
+    """
+    actual = {}
+    for idx, (_title, width_key, _weight) in enumerate(COLUMNS):
+        bbox = header.grid_bbox(row=0, column=idx)
+        if bbox:
+            actual[width_key] = max(MIN_COL_WIDTH, int(bbox[2]))
+    if len(actual) != len(COLUMNS):
+        return False
+    app.col_widths.update(actual)
+    app.col_width_overridden.update(actual)
+    _apply_column_widths(app)
+    header.update_idletasks()
+    return True
 
 
 def _add_column_resizers(app, header):
@@ -222,31 +278,43 @@ def _add_column_resizers(app, header):
     drag_state = {}
 
     for idx in range(len(COLUMNS) - 1):
-        handle = tk.Frame(header, bg=theme.color("line"), cursor="sb_h_double_arrow")
+        # 7px 폭 전체가 마우스 손잡이지만 실제 선은 가운데 1px만 그린다. 얇은 선의
+        # 시인성과 잡기 쉬운 영역을 함께 확보한다.
+        handle = tk.Canvas(
+            header, bg=theme.color("th_bg"), highlightthickness=0,
+            cursor="sb_h_double_arrow", takefocus=0)
+        line_id = handle.create_line(
+            RESIZE_HANDLE_WIDTH // 2, 0, RESIZE_HANDLE_WIDTH // 2, 1,
+            fill=theme.color("checkbox_border"), width=1)
         handles.append((idx, handle))
         left_key = COLUMNS[idx][1]
         right_key = COLUMNS[idx + 1][1]
 
         def start_drag(event, left_key=left_key, right_key=right_key):
+            if not _capture_actual_column_widths(app, header):
+                return
+            drag_state.clear()
             drag_state["x"] = event.x_root
-            drag_state["left"] = app.col_widths.get(left_key, theme.layout[left_key])
-            drag_state["right"] = app.col_widths.get(right_key, theme.layout[right_key])
+            drag_state["left"] = app.col_widths[left_key]
+            drag_state["right"] = app.col_widths[right_key]
 
         def on_drag(event, left_key=left_key, right_key=right_key):
             if "x" not in drag_state:
                 return
             delta = event.x_root - drag_state["x"]
-            new_left = max(MIN_COL_WIDTH, drag_state["left"] + delta)
-            actual_delta = new_left - drag_state["left"]
-            new_right = drag_state["right"] - actual_delta
-            if new_right < MIN_COL_WIDTH:
-                new_right = MIN_COL_WIDTH
-                new_left = drag_state["left"] + drag_state["right"] - MIN_COL_WIDTH
+            pair_width = drag_state["left"] + drag_state["right"]
+            new_left = max(
+                MIN_COL_WIDTH,
+                min(pair_width - MIN_COL_WIDTH, drag_state["left"] + delta))
+            new_right = pair_width - new_left
             app.col_widths[left_key] = int(new_left)
             app.col_widths[right_key] = int(new_right)
             app.col_width_overridden.add(left_key)
             app.col_width_overridden.add(right_key)
             _apply_column_widths(app)
+            # Frame 폭은 그대로라 <Configure>가 다시 오지 않을 수 있다. 레이아웃을 지금
+            # 계산한 뒤 손잡이를 옮겨야 드래그 중 선이 마우스를 따라온다.
+            header.update_idletasks()
             _reposition_resizers(header, handles)
 
         def end_drag(event):
@@ -256,7 +324,15 @@ def _add_column_resizers(app, header):
         handle.bind("<Button-1>", start_drag)
         handle.bind("<B1-Motion>", on_drag)
         handle.bind("<ButtonRelease-1>", end_drag)
+        handle.bind("<Enter>", lambda event, canvas=handle, item=line_id:
+                    canvas.itemconfigure(item, fill=theme.color("accent"), width=2))
+        handle.bind("<Leave>", lambda event, canvas=handle, item=line_id:
+                    canvas.itemconfigure(item, fill=theme.color("checkbox_border"), width=1))
+        handle.bind("<Configure>", lambda event, canvas=handle, item=line_id:
+                    canvas.coords(item, RESIZE_HANDLE_WIDTH // 2, 0,
+                                  RESIZE_HANDLE_WIDTH // 2, event.height))
 
+    app.header_resize_handles = handles
     header.bind("<Configure>", lambda e: _reposition_resizers(header, handles))
     header.after_idle(lambda: _reposition_resizers(header, handles))
 
@@ -367,6 +443,7 @@ def update_row_slot(app, slot, item, row_index):
     c = theme.colors
     no = item["no"]
     slot["no"] = no
+    slot["item"] = item
     slot["parity"] = row_index % 2
     # v0.1.3: 품번이 겹치는 행은 배경색으로 알린다(요청 3). 판정은 app이 목록 전체를 보고
     # 미리 해 둔 집합에서 가져온다 -- 행마다 다시 세면 카드 수의 제곱만큼 일이 늘어난다.
@@ -381,8 +458,6 @@ def update_row_slot(app, slot, item, row_index):
     paint_checkbox(app, slot, no in app.selected_nos)
 
     slot["no_label"].configure(text=str(row_index + 1))
-    slot["model_label"].configure(text=shorten(item["model"] or "-", 11))
-
     if item.get("is_new_registration"):
         if slot["new_badge"] is None:
             badge = tk.Label(slot["partno_top"], text="NEW", bg=c["new_bg"], fg=c["new_fg"],
@@ -401,15 +476,7 @@ def update_row_slot(app, slot, item, row_index):
         text=shorten(item["part_no"] or f"NO. {row_index + 1} 미입력", 15),
         fg=c["row_dup_fg"] if slot["duplicate"] else c["text"])
     slot["date_label"].configure(text=item["created_at"])
-    slot["partname_label"].configure(text=shorten(item["part_name"] or "품명 미입력", 40))
-    slot["comment_label"].configure(text=shorten(one_line(item.get("comment", "")) or "-", 20))
-    # 요청 3-4: 상수 글자 수 대신 지금 열 폭에서 실제로 들어가는 만큼만 보여 준다.
-    # 소재 열이 사용자가 끌어 조절할 수 있게 되면서, 넓혀도 `…`이 남던 것을 없앤다.
-    material_width = app.col_widths.get("col_material_width", theme.layout["col_material_width"])
-    usable = max(20, material_width - 2 * theme.layout["cell_pad_x"])
-    slot["material_label"].configure(text=fit_text(theme, item["material"] or "-", usable))
-    slot["heat_label"].configure(text=hrc_text(item) or "-")
-    slot["size_label"].configure(text=shorten(item["size"] or "-", 17))
+    _update_fitted_cell_text(app, slot, item)
 
     status_bg, status_fg, _ = theme.get_status_colors(item["possible"])
     slot["status_label"].configure(text=shorten(item["possible"], 9), bg=status_bg, fg=status_fg)

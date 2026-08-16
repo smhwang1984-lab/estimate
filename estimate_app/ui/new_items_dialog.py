@@ -19,6 +19,7 @@ class NewItemsDialog:
         self.window.minsize(900, 480)
         self.window.configure(bg=app.theme.color("bg"))
         self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.window.bind("<Escape>", self.close)
 
         frame = ttk.Frame(self.window, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -54,15 +55,18 @@ class NewItemsDialog:
         ttk.Button(buttons, text="선택 삭제", command=self.delete_selected).pack(side=tk.LEFT, padx=6)
         ttk.Button(buttons, text="신규품목 출력", command=self.export_all).pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(buttons, text="본래 창으로 이관", command=self.transfer_all).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(buttons, text="닫기", command=self.close).pack(side=tk.RIGHT, padx=6)
         self.refresh()
+        self.window.after_idle(self.window.focus_set)
 
-    def close(self):
+    def close(self, event=None):
         if any(isinstance(key, tuple) and key[0] == "new" for key in self.app.open_popups):
             messagebox.showwarning("창을 닫을 수 없음", "열려 있는 신규품목 입력창을 먼저 닫아 주세요.",
                                    parent=self.window)
-            return
+            return "break"
         self.app.new_items_window = None
         self.window.destroy()
+        return "break"
 
     def _next_draft_no(self):
         return max([int(item.get("draft_no", 0)) for item in self.app.new_items], default=0) + 1

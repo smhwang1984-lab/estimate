@@ -297,15 +297,22 @@ def _build_size_section(app, parent, item, material_var):
         variable.trace_add("write", update_weight_preview)
     update_weight_preview()
 
-    # v0.1.1: 이 카드의 Material·Size를 가공조건 산출기로 보낸다(카드는 고치지 않는다,
-    # 사용자 결정 -- plan.md 2026-08-09 v0.1.1 항목). 팝업이 이미 grab_set() 중이므로
-    # 산출기가 grab을 넘겨받았다가 닫을 때 돌려준다(condition_dialog._rehome_grab).
+    # 가공조건 산출기는 저장 전 입력값도 바로 계산해야 한다. item을 직접 고치면 취소를
+    # 눌렀을 때 변경이 새어 나가므로, 버튼을 누르는 순간에만 계산용 사본을 만든다.
+    # 팝업이 이미 grab_set() 중이므로 산출기가 grab을 넘겨받았다가 닫을 때 돌려준다
+    # (condition_dialog._rehome_grab).
+    def current_condition_item():
+        condition_item = dict(item)
+        condition_item["material"] = material_var.get().strip()
+        condition_item["size"] = final_size_var.get().strip()
+        return condition_item
+
     action_row = ttk.Frame(size_box)
     action_row.pack(fill=tk.X, pady=(8, 0))
     ttk.Button(action_row, text="가공조건 산출기 열기",
               command=lambda: open_condition_dialog(
-                  app, item=item, popup=parent.winfo_toplevel())).pack(side=tk.LEFT)
-    ttk.Label(action_row, text="현재 저장된 Material·Size를 계산기로 보냅니다. 계산 결과는 카드에 반영되지 않습니다.",
+                  app, item=current_condition_item(), popup=parent.winfo_toplevel())).pack(side=tk.LEFT)
+    ttk.Label(action_row, text="현재 입력 중인 Material·Size를 즉시 계산기로 보냅니다. 계산 결과는 카드에 저장되지 않습니다.",
               style="Muted.TLabel", wraplength=340, justify="left").pack(side=tk.LEFT, padx=(10, 0))
 
     return final_size_var, get_weight
@@ -330,7 +337,14 @@ def open_item_popup(app, no, *, items=None, popup_key=None, on_change=None,
         existing.focus_force()
         return
 
-    popup = tk.Toplevel(app.root)
+    owner = app.root
+    new_items_dialog = getattr(app, "new_items_window", None)
+    if isinstance(popup_key, tuple) and new_items_dialog is not None:
+        candidate = getattr(new_items_dialog, "window", None)
+        if candidate is not None and candidate.winfo_exists():
+            owner = candidate
+
+    popup = tk.Toplevel(owner)
     app.open_popups[popup_key] = popup
     popup.title(f"[{title_label or ('NO. ' + display_no_text(app, no))}] 견적 항목 입력")
     # 화면 배율이 커도 팝업이 화면 밖으로 넘치지 않도록 표시 영역에 맞춰 크기를 정한다.
@@ -343,6 +357,7 @@ def open_item_popup(app, no, *, items=None, popup_key=None, on_change=None,
     popup.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
     popup.minsize(min(960, width), min(680, height))
     popup.configure(bg=app.theme.color("bg"))
+    popup.transient(owner)
     popup.grab_set()
     popup.bind("<Destroy>", lambda event, key=popup_key: app.open_popups.pop(key, None) if event.widget is popup else None)
 
@@ -373,11 +388,14 @@ def open_item_popup(app, no, *, items=None, popup_key=None, on_change=None,
         (f"{headers.get('part_name', '품명')} *", "part_name", 0, 2),
         (headers.get("model", "기종"), "model", 1, 0),
     ]
+    first_entry = None
     for label, key, row, col in text_rows:
         ttk.Label(info, text=label).grid(row=row, column=col, sticky="e", padx=6, pady=6)
         fields[key] = tk.StringVar(value=item[key])
-        ttk.Entry(info, textvariable=fields[key], width=18).grid(
-            row=row, column=col + 1, sticky="ew", padx=6, pady=6)
+        entry = ttk.Entry(info, textvariable=fields[key], width=18)
+        entry.grid(row=row, column=col + 1, sticky="ew", padx=6, pady=6)
+        if first_entry is None:
+            first_entry = entry
 
     ttk.Label(info, text=f"{headers.get('qty', 'Qty')}").grid(row=1, column=2, sticky="e", padx=6, pady=6)
     fields["qty"] = tk.StringVar(value=str(item["qty"]))
@@ -509,6 +527,16 @@ def open_item_popup(app, no, *, items=None, popup_key=None, on_change=None,
 
     popup.bind("<Escape>", close_popup, add="+")
     popup.protocol("WM_DELETE_WINDOW", close_popup)
+
+    def focus_input():
+        """창이 뜬 직후 키보드 포커스를 팝업 안에 두어 Esc가 즉시 동작하게 한다."""
+        if popup.winfo_exists():
+            popup.lift()
+            if first_entry is not None:
+                first_entry.focus_set()
+
+    popup.after_idle(focus_input)
+
     def save_and_close(next_item=False):
         if not fields["part_no"].get().strip() or not fields["part_name"].get().strip():
             messagebox.showerror("입력 오류", "품번과 품명은 필수 입력 항목입니다.", parent=popup)
