@@ -383,7 +383,7 @@ def update_row_slot(app, slot, item, row_index):
     slot["no_label"].configure(text=str(row_index + 1))
     slot["model_label"].configure(text=shorten(item["model"] or "-", 11))
 
-    if item.get("save_pending"):
+    if item.get("is_new_registration"):
         if slot["new_badge"] is None:
             badge = tk.Label(slot["partno_top"], text="NEW", bg=c["new_bg"], fg=c["new_fg"],
                              font=theme.small, padx=5, pady=0, highlightthickness=1,

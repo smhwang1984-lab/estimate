@@ -311,20 +311,28 @@ def _build_size_section(app, parent, item, material_var):
     return final_size_var, get_weight
 
 
-def open_item_popup(app, no):
-    item = next((row for row in app.data if row["no"] == no), None)
+def open_item_popup(app, no, *, items=None, popup_key=None, on_change=None,
+                    on_next=None, title_label=None):
+    """항목 입력창을 연다.
+
+    items/callback을 생략하면 본래 현황판에서 종전처럼 동작한다. 신규품목 창은 별도
+    컬렉션과 콜백을 넘겨 메인 목록에 섞이지 않은 채 같은 입력 UI를 재사용한다.
+    """
+    collection = app.data if items is None else items
+    item = next((row for row in collection if row["no"] == no), None)
     if not item:
         return
+    popup_key = no if popup_key is None else popup_key
     # 같은 카드를 두 번 열지 않고, 이미 떠 있으면 앞으로 가져온다.
-    existing = app.open_popups.get(no)
+    existing = app.open_popups.get(popup_key)
     if existing is not None and existing.winfo_exists():
         existing.lift()
         existing.focus_force()
         return
 
     popup = tk.Toplevel(app.root)
-    app.open_popups[no] = popup
-    popup.title(f"[NO. {display_no_text(app, no)}] 견적 항목 입력")
+    app.open_popups[popup_key] = popup
+    popup.title(f"[{title_label or ('NO. ' + display_no_text(app, no))}] 견적 항목 입력")
     # 화면 배율이 커도 팝업이 화면 밖으로 넘치지 않도록 표시 영역에 맞춰 크기를 정한다.
     # v0.0.9: Material·열처리·여러 줄 Comment가 들어오면서 세로가 길어져, 예전 상한(1180x860)
     # 으로는 하단 저장 버튼과 오른쪽 단가·금액 칸이 잘렸다. 화면이 허락하는 만큼 키운다.
@@ -336,7 +344,7 @@ def open_item_popup(app, no):
     popup.minsize(min(960, width), min(680, height))
     popup.configure(bg=app.theme.color("bg"))
     popup.grab_set()
-    popup.bind("<Destroy>", lambda event, card_no=no: app.open_popups.pop(card_no, None) if event.widget is popup else None)
+    popup.bind("<Destroy>", lambda event, key=popup_key: app.open_popups.pop(key, None) if event.widget is popup else None)
 
     frame = ttk.Frame(popup, padding=16)
     frame.pack(fill=tk.BOTH, expand=True)
@@ -481,10 +489,14 @@ def open_item_popup(app, no):
             return "break"
         closing = True
         if not has_item_data(item):
-            app.data = [row for row in app.data if row["no"] != no]
-            app.selected_nos.discard(no)
+            collection[:] = [row for row in collection if row["no"] != no]
+            if collection is app.data:
+                app.selected_nos.discard(no)
             app.save_session()
-            app.refresh_table(True)
+            if on_change:
+                on_change()
+            else:
+                app.refresh_table(True)
         # popup 자체가 현재 modal grab을 잡고 있을 때만 푼다. 가공조건 산출기처럼
         # 자식 창이 grab을 넘겨받은 상태는 건드리지 않는다.
         try:
@@ -540,10 +552,16 @@ def open_item_popup(app, no):
         item.update(mach_values)
 
         app.save_session()
-        app.refresh_table(True)
+        if on_change:
+            on_change()
+        else:
+            app.refresh_table(True)
         popup.destroy()
         if next_item:
-            app.open_next_item(no)
+            if on_next:
+                on_next()
+            else:
+                app.open_next_item(no)
 
     btns = ttk.Frame(frame)
     btns.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(18, 0))

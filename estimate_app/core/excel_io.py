@@ -12,11 +12,8 @@ v0.0.7부터 열 위치를 코드에 고정하지 않는다. `resolve_columns()`
 
     5행: 공정별 단가   6행: 헤더   7행부터: 입력 행   헤더 열의 '합계' 문구가 있는 행 = 합계 행
 
-v0.1.0: 출력 파일에 수식을 남기지 않는다(요청 1-3). 금액·순번·합계를 전부 계산된
-값으로 적는다 -- 화면과 같은 계산 결과가 나가도록 core/pricing.calc_row()를 그대로 쓴다.
-엑셀에서 단가·시간을 직접 고쳐도 더 이상 재계산되지 않는다는 뜻이니, 그 값이 필요하면
-프로그램에서 고쳐 다시 출력해야 한다. 같은 김에 견적서 시트의 숨은 항목 행(요청 1-1)과
-Comment 칸의 행 높이(요청 1-2)도 여기서 맞춘다.
+v0.1.6: 원본 양식의 계산 구조를 유지하도록 순번·금액·합계·견적서 참조를 다시 수식으로
+출력한다. 기본 행을 넘는 경우 첫 데이터 행의 수식을 상대 참조에 맞게 번역해 복제한다.
 """
 
 import os
@@ -25,6 +22,7 @@ from copy import copy
 from datetime import datetime
 
 from openpyxl.styles import Alignment
+from openpyxl.formula.translate import Translator
 from openpyxl.utils import get_column_letter, range_boundaries
 
 from . import paths, settings as settings_store
@@ -266,20 +264,43 @@ def prepare_blank_row(ws, row, cols):
             ws.cell(row=row, column=col).value = None
 
 
-def write_row_values(ws, row, item, rates, cols):
-    """항목 한 건의 순번·시간합계·단가합계·최종단가를 계산된 값으로 적는다(요청 1-3).
+def _translated_formula(ws, source_row, target_row, col, fallback):
+    """원본 데이터 행 수식을 대상 행의 상대 참조에 맞춰 옮긴다."""
+    source = ws.cell(row=source_row, column=col)
+    value = source.value
+    if isinstance(value, str) and value.startswith("="):
+        try:
+            return Translator(value, origin=source.coordinate).translate_formula(
+                ws.cell(row=target_row, column=col).coordinate)
+        except ValueError:
+            pass
+    return fallback
 
-    화면과 엑셀이 같은 금액을 보이도록 core/pricing.calc_row()로 계산한다 -- 계산 규칙을
-    한 곳에만 두는 지금 규칙(pricing.py 첫머리 참고)을 그대로 따른다.
-    """
-    ws.cell(row=row, column=1, value=row - HEADER_ROW)  # 기존 '=ROW()-6'과 같은 값
-    sum_time, unit_price, final_price = calc_row(item, rates)
-    if cols["sum"]:
-        ws.cell(row=row, column=cols["sum"], value=round(sum_time, 2))
-    if cols["unit_price"]:
-        ws.cell(row=row, column=cols["unit_price"], value=round(unit_price))
+
+def write_row_values(ws, row, item, rates, cols):
+    """항목 한 건의 계산 셀을 원본 양식과 같은 수식으로 채운다."""
+    ws.cell(row=row, column=1).value = _translated_formula(
+        ws, FIRST_DATA_ROW, row, 1, "=ROW()-6")
+    machine_cols = sorted(col for col in cols["machine"].values() if col)
+    if cols["sum"] and machine_cols:
+        first, last = get_column_letter(machine_cols[0]), get_column_letter(machine_cols[-1])
+        fallback = f"=SUM(${first}{row}:${last}{row})"
+        ws.cell(row=row, column=cols["sum"]).value = _translated_formula(
+            ws, FIRST_DATA_ROW, row, cols["sum"], fallback)
+    if cols["unit_price"] and machine_cols and cols["qty"]:
+        qty = get_column_letter(cols["qty"])
+        terms = "+".join(
+            f"{get_column_letter(col)}{row}*${get_column_letter(col)}${RATE_ROW}"
+            for col in machine_cols)
+        fallback = f"=({terms})*${qty}{row}"
+        ws.cell(row=row, column=cols["unit_price"]).value = _translated_formula(
+            ws, FIRST_DATA_ROW, row, cols["unit_price"], fallback)
     if cols["final_price"]:
-        ws.cell(row=row, column=cols["final_price"], value=final_price)
+        unit_col = get_column_letter(cols["unit_price"])
+        fallback = f"=ROUNDDOWN(${unit_col}{row},-3)"
+        ws.cell(row=row, column=cols["final_price"]).value = _translated_formula(
+            ws, FIRST_DATA_ROW, row, cols["final_price"], fallback)
+    _, _, final_price = calc_row(item, rates)
     return final_price
 
 
@@ -378,9 +399,11 @@ def write_summary_label(ws, cols, summary_row):
 
 
 def write_summary_total(ws, cols, summary_row, total):
-    """항목별 최종단가를 다 더한 값을 합계 행에 적는다(요청 1-3, 수식 대신 값)."""
+    """최종단가 합계를 데이터 행 범위를 참조하는 수식으로 적는다."""
     if cols["final_price"]:
-        ws.cell(row=summary_row, column=cols["final_price"], value=total)
+        letter = get_column_letter(cols["final_price"])
+        ws.cell(row=summary_row, column=cols["final_price"]).value = (
+            f"=SUM({letter}{FIRST_DATA_ROW}:{letter}{summary_row - 1})")
 
 
 def layout_machine_sheet(ws, cols, need_rows):
@@ -396,8 +419,7 @@ def layout_machine_sheet(ws, cols, need_rows):
         additional = need_rows - capacity
         bounds = _print_area_bounds(ws)
         shift_block_down(ws, summary_row, additional, max_col)
-        # shift_block_down이 이미 값(A/V/W/X 포함)을 비워 뒀으므로 여기서 수식을 새로
-        # 넣지 않는다(v0.1.0, 요청 1-3) -- 서식·병합만 갖추고 값은 write_row_values()가 채운다.
+        # 값은 실제 항목을 쓰는 단계에서 원본 7행 수식을 번역해 채운다.
         for row in range(summary_row, summary_row + additional):
             copy_row_style(ws, FIRST_DATA_ROW, row, max_col)
             merge_size_cell(ws, row, cols)
@@ -410,14 +432,9 @@ def layout_machine_sheet(ws, cols, need_rows):
 
 
 def sync_estimate_sheet(es, gigye_ws, gigye_cols, gigye_summary_row):
-    """기계 시트의 실제 데이터 행 수에 맞춰 견적서 시트의 항목 칸 수·값을 맞추고,
-    항목이 든 행만 보이도록 숨김을 정리한다(요청 1-1, 1-3).
-
-    v0.1.0부터 참조 수식(`=기계!$C7`) 대신 기계 시트에 이미 값으로 적힌 품번·품명·
-    최종단가를 그대로 복사해 적는다 -- write_row_values()가 그 값들을 먼저 써 두므로
-    여기서는 읽기만 하면 된다.
-    """
-    item_count = gigye_summary_row - FIRST_DATA_ROW
+    """견적서 항목 행을 기계 시트 참조 수식으로 동기화한다."""
+    item_count = sum(1 for row in range(FIRST_DATA_ROW, gigye_summary_row)
+                     if row_has_input_data(gigye_ws, row, gigye_cols))
 
     summary_row = ES_FIRST_ROW
     limit = ES_FIRST_ROW + 2000
@@ -456,7 +473,6 @@ def sync_estimate_sheet(es, gigye_ws, gigye_cols, gigye_summary_row):
     part_no_col = gigye_cols["part_no"]
     part_name_col = gigye_cols["part_name"]
     final_price_col = gigye_cols["final_price"]
-    total = 0
     filled_count = 0
     for row in range(ES_FIRST_ROW, summary_row):
         src_row = row - ES_ROW_OFFSET
@@ -466,18 +482,22 @@ def sync_estimate_sheet(es, gigye_ws, gigye_cols, gigye_summary_row):
         # "value 인자를 안 준 것"으로 취급되어 기존 값이 그대로 남는다(직접 재현 확인).
         # 반드시 .value 속성에 직접 대입해야 실제로 비워진다.
         if part_no_col:
+            fallback = f"={SHEET_NAME}!{get_column_letter(part_no_col)}{src_row}"
             es.cell(row=row, column=ES_COLS["part_no"]).value = (
-                str(gigye_ws.cell(row=src_row, column=part_no_col).value or "") if has_data else None)
+                _translated_formula(es, ES_FIRST_ROW, row, ES_COLS["part_no"], fallback)
+                if has_data else None)
         if part_name_col:
+            fallback = f"={SHEET_NAME}!{get_column_letter(part_name_col)}{src_row}"
             es.cell(row=row, column=ES_COLS["part_name"]).value = (
-                str(gigye_ws.cell(row=src_row, column=part_name_col).value or "") if has_data else None)
-        price_value = (gigye_ws.cell(row=src_row, column=final_price_col).value
-                       if (has_data and final_price_col) else None)
+                _translated_formula(es, ES_FIRST_ROW, row, ES_COLS["part_name"], fallback)
+                if has_data else None)
         if final_price_col:
-            es.cell(row=row, column=ES_COLS["final_price"]).value = price_value
+            fallback = f"={SHEET_NAME}!{get_column_letter(final_price_col)}{src_row}"
+            es.cell(row=row, column=ES_COLS["final_price"]).value = (
+                _translated_formula(es, ES_FIRST_ROW, row, ES_COLS["final_price"], fallback)
+                if has_data else None)
         if has_data:
             filled_count += 1
-            total += price_value or 0
 
     # 요청 1-1: 실제 항목이 든 행만 보이고, 그 다음 한 행은 비운 채 보이고(구분선 대신),
     # 나머지는 숨긴다. 양식 원본은 22행부터 끝까지 hidden이라 항목이 8건만 넘어도
@@ -486,7 +506,9 @@ def sync_estimate_sheet(es, gigye_ws, gigye_cols, gigye_summary_row):
     for row in range(ES_FIRST_ROW, summary_row):
         if row < blank_row:
             es.row_dimensions[row].hidden = False
-            es.cell(row=row, column=ES_COLS["no"]).value = row - 14
+            fallback = f"={SHEET_NAME}!A{row - ES_ROW_OFFSET}"
+            es.cell(row=row, column=ES_COLS["no"]).value = _translated_formula(
+                es, ES_FIRST_ROW, row, ES_COLS["no"], fallback)
         elif row == blank_row:
             es.row_dimensions[row].hidden = False
             es.cell(row=row, column=ES_COLS["no"]).value = None
@@ -496,7 +518,9 @@ def sync_estimate_sheet(es, gigye_ws, gigye_cols, gigye_summary_row):
     es.row_dimensions[summary_row].hidden = False
 
     if final_price_col:
-        es.cell(row=summary_row, column=ES_COLS["final_price"], value=total)
+        price_letter = get_column_letter(ES_COLS["final_price"])
+        es.cell(row=summary_row, column=ES_COLS["final_price"]).value = (
+            f"=SUM({price_letter}{ES_FIRST_ROW}:{price_letter}{summary_row - 1})")
 
 
 # ---------- 읽기 ----------
@@ -671,7 +695,7 @@ def write_machine_footer(ws, summary_row, config_values, today=None):
     return date_text
 
 
-def write_estimate_header(es, config_values, date_text):
+def write_estimate_header(es, config_values, date_text, machine_date_row=None):
     """견적서 시트 맨 위(받는 업체 / 우리 쪽 연락처 / 날짜)를 설정값으로 채운다(요청 7-1).
 
     양식에는 `회사명㈜ 귀중`, `사업명` 같은 플레이스홀더가 그대로 남아 있었다.
@@ -684,9 +708,9 @@ def write_estimate_header(es, config_values, date_text):
 
     fill(ES_CLIENT_CELLS, config_values["client"])
     fill(ES_SUPPLIER_CELLS, config_values["supplier"])
-    # v0.1.0: 기계 시트 푸터를 가리키던 참조 수식(`=기계!Q##`) 대신 같은 날짜 문자열을
-    # 그대로 적는다(요청 1-3) -- 항목 수에 따라 푸터가 밀려도 다시 계산할 필요가 없다.
-    es[ES_DATE_CELL] = date_text
+    # 원본 양식처럼 기계 시트 푸터 날짜를 참조한다. 푸터는 항목 수에 따라 이동한다.
+    es[ES_DATE_CELL] = (f"={SHEET_NAME}!{get_column_letter(FOOTER_COL)}{machine_date_row}"
+                        if machine_date_row else date_text)
 
 
 def widen_price_columns(ws, cols):
@@ -735,7 +759,14 @@ def export_items(items, rates, output_path, config_values=None):
     _sync_estimate_if_present(wb, ws, cols, summary_row)
     date_text = write_machine_footer(ws, summary_row, config_values)
     if ESTIMATE_SHEET_NAME in wb.sheetnames:
-        write_estimate_header(wb[ESTIMATE_SHEET_NAME], config_values, date_text)
+        write_estimate_header(wb[ESTIMATE_SHEET_NAME], config_values, date_text,
+                              summary_row + FOOTER_DATE_OFFSET)
     apply_custom_headers(wb, ws, cols, config_values)
+    # openpyxl은 수식을 계산하지 않으므로 Excel이 파일을 열 때 전체 재계산하게 한다.
+    calculation = getattr(wb, "calculation", None)
+    if calculation is not None:
+        calculation.calcMode = "auto"
+        calculation.fullCalcOnLoad = True
+        calculation.forceFullCalc = True
     wb.save(output_path)
     return saved_count

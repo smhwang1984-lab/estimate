@@ -23,7 +23,7 @@ def get_session_path():
     return paths.get_user_file(SESSION_FILE)
 
 
-def save(items, selected_nos, search_text, library_current=None):
+def save(items, selected_nos, search_text, library_current=None, new_items=None):
     # v0.0.9: 단가(rates)는 여기에 담지 않는다. 설정창(core/settings.py)이 단가의 유일한
     # 주인인데, 세션에도 담아 두면 프로그램을 켤 때 옛 세션 값이 새 설정을 덮어써 버린다.
     #
@@ -37,6 +37,8 @@ def save(items, selected_nos, search_text, library_current=None):
         "search": search_text,
         "library": library_current,
         "items": [item for item in items if has_item_data(item)],
+        # 본래 현황판으로 아직 이관하지 않은 신규품목은 메인 목록과 분리해 보관한다.
+        "new_items": [item for item in (new_items or []) if has_item_data(item)],
     }
     # v0.1.4: 로컬이지만 여기도 임시 파일 + 바꿔치기로 쓴다. 저장은 프로그램을 끄는
     # 순간에 일어나므로, 쓰는 도중에 전원이 끊기면 예전 방식으로는 세션이 통째로
@@ -56,9 +58,18 @@ def load():
         item = create_blank_item(raw_item.get("no", 0))
         item.update(raw_item)
         items.append(item)
+    new_items = []
+    for raw_item in payload.get("new_items", []):
+        if not isinstance(raw_item, dict):
+            continue
+        item = create_blank_item(raw_item.get("no", 0))
+        item.update(raw_item)
+        item["is_new_registration"] = bool(item.get("is_new_registration", True))
+        new_items.append(item)
     library = payload.get("library")
     return {
         "items": items,
+        "new_items": new_items,
         "selected_nos": set(payload.get("selected_nos", [])),
         "search": payload.get("search", ""),
         "saved_at": payload.get("saved_at"),

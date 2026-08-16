@@ -20,6 +20,8 @@ def create_blank_item(no):
         "source_file": "",
         "source_month": "",
         "save_pending": True,
+        # NEW는 수정 여부가 아니라 신규 등록 여부다. 기존 품목을 고쳐도 이 값은 바꾸지 않는다.
+        "is_new_registration": False,
         "part_no": "",
         "part_name": "",
         "model": "",
@@ -175,6 +177,14 @@ def filter_items(items, query):
     all_items.sort(key=lambda item: (item.get("added_at", ""), item.get("no", 0)), reverse=True)
     visible_items = [item for item in all_items if item_matches_search(item, query)]
     return all_items, visible_items
+
+
+def sort_new_items(items):
+    """신규품목 창은 최초 등록이 빠른 항목부터 안정적으로 표시한다."""
+    return sorted(items, key=lambda item: (
+        item.get("registered_at") or item.get("added_at", ""),
+        item.get("draft_no", 0),
+    ))
 
 
 def normalize_part_no(text):

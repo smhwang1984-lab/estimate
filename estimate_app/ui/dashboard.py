@@ -13,6 +13,7 @@ from ..core.model import (create_blank_item, filter_items, find_duplicate_part_n
 from ..core.pricing import calc_total_amount
 from .condition_dialog import open_condition_dialog
 from .library_dialog import open_library_dialog
+from .new_items_dialog import open_new_items_dialog
 from .popup import open_item_popup
 from .settings_dialog import open_settings_dialog
 from .table import (COLUMNS, build_header, build_header_underline, configure_columns, create_row_slot,
@@ -30,6 +31,7 @@ class EstimateApp:
         self._apply_window_icon()
 
         self.data = []
+        self.new_items = []
         # v0.0.9: 단가·Material 목록·회사 정보의 주인은 설정창이다(core/settings.py).
         # 세션에는 더 이상 단가를 담지 않는다 — 담아 두면 옛 세션이 새 설정을 덮어쓴다.
         self.settings = settings_store.load()
@@ -66,6 +68,7 @@ class EstimateApp:
         # v0.1.4: 견적 보관함(core/library.py). 방금 불러오거나 저장한 견적이 무엇인지
         # 기억해 둔다 -- 저장할 때 "내가 불러온 뒤 남이 고쳤는지"를 mtime으로 판단하는 데 쓴다.
         self.library_window = None
+        self.new_items_window = None
         self.library_current = None
         # v0.1.1: 가공조건 산출기(Mill/Lathe). 카드 데이터를 읽기만 하고 고치지 않으므로
         # 세션·저장 경로와는 무관하다.
@@ -165,6 +168,7 @@ class EstimateApp:
             fill=c["panel_muted_fg"], font=self.theme.small)
 
         actions = tk.Frame(self.header_canvas, bg=c["panel_2"])
+        ttk.Button(actions, text="신규품목", command=self.open_new_items).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="기계 시트 업로드", command=self.upload_excel_file).pack(side=tk.LEFT, padx=4)
         # v0.1.4: 견적 보관함. 파일을 다루는 동작이라 업로드 옆에 둔다(보조 기능 줄은
         # 이미 다섯 개라 더 붙이면 좁은 화면에서 밀린다).
@@ -172,7 +176,6 @@ class EstimateApp:
                    command=lambda: self.open_library("load")).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="견적 저장",
                    command=lambda: self.open_library("save")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(actions, text="새 항목 추가", command=self.add_row).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="설정", command=self.open_settings).pack(side=tk.LEFT, padx=4)
         self.header_actions_id = self.header_canvas.create_window(
             0, header_height // 2, anchor="e", window=actions)
@@ -308,6 +311,7 @@ class EstimateApp:
         # 불러온 견적은 이미 저장된 것이므로 NEW 배지를 붙이지 않는다.
         for item in self.data:
             item["save_pending"] = False
+            item["is_new_registration"] = False
         self.save_session()
         self.refresh_table(True)
         return True
@@ -369,13 +373,15 @@ class EstimateApp:
 
     def save_session(self):
         search_text = self.search_var.get() if hasattr(self, "search_var") else ""
-        session.save(self.data, self.selected_nos, search_text, self.library_current)
+        session.save(self.data, self.selected_nos, search_text, self.library_current,
+                     self.new_items)
 
     def restore_session(self):
         payload = session.load()
         if not payload:
             return
         self.data = payload["items"]
+        self.new_items = payload.get("new_items", [])
         self.selected_nos = set(payload["selected_nos"])
         # v0.1.4: 보관함 참조도 되살린다. 이게 없으면 프로그램을 껐다 켠 뒤 같은 견적을
         # 저장할 때 "다른 사람이 고쳤습니다" 경고가 조용히 죽는다(session.py 첫머리 참고).
@@ -462,7 +468,7 @@ class EstimateApp:
         if not all_items:
             self._hide_rows()
             self._show_empty("아직 작성된 견적 항목이 없습니다.",
-                             "상단의 '기계 시트 업로드' 또는 '새 항목 추가'를 사용하세요.")
+                             "상단의 '신규품목' 또는 '기계 시트 업로드'를 사용하세요.")
             if reset_limit:
                 self.row_canvas.yview_moveto(0)
             return
@@ -610,27 +616,17 @@ class EstimateApp:
     # ---------- 카드 추가 / 팝업 ----------
 
     def add_row(self):
-        new_no = get_next_no(self.data)
-        self.data.append(create_blank_item(new_no))
-        self.refresh_table(True)
-        self.open_popup(new_no)
+        self.open_new_items(add_immediately=True)
+
+    def open_new_items(self, add_immediately=False):
+        open_new_items_dialog(self, add_immediately=add_immediately)
 
     def open_popup(self, no):
         open_item_popup(self, no)
 
     def open_next_item(self, no):
-        """'저장 후 다음 항목 입력' — 언제나 새 빈 카드를 연다.
-
-        예전에는 `no + 1`번 카드가 이미 있으면 그 카드를 열었다. 연속 입력 중에 남의 카드가
-        열려 덮어쓰게 되는 동작인데, v0.0.9에서 현황판에 순번이 보이게 되면서 눈에 띄게 됐다.
-        비어 있는 번호를 새로 발급해 항상 새 카드로 이어 간다.
-        """
-        next_no = no + 1
-        if any(row["no"] == next_no for row in self.data):
-            next_no = get_next_no(self.data)
-        self.data.append(create_blank_item(next_no))
-        self.refresh_table(True)
-        self.open_popup(next_no)
+        """연속 신규 등록은 반드시 신규품목 전용 창에서 이어 간다."""
+        self.open_new_items(add_immediately=True)
 
     # ---------- 삭제 / 되돌리기 (v0.1.2) ----------
 
@@ -806,6 +802,7 @@ class EstimateApp:
             for item in cards:
                 item["no"] = next_no
                 item["save_pending"] = True
+                item["is_new_registration"] = False
                 self.data.append(item)
                 next_no += 1
         self.save_session()
@@ -852,6 +849,7 @@ class EstimateApp:
         # 안 그러면 NEW 배지를 지워 줄 곳이 없어 모든 카드에 영원히 붙어 있게 된다.
         for item in items:
             item["save_pending"] = False
+            item["is_new_registration"] = False
         self.save_session()
         self.refresh_table(False)
         messagebox.showinfo("다운로드 완료",
