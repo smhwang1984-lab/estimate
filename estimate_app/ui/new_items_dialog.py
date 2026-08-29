@@ -143,10 +143,19 @@ class NewItemsDialog:
                 parent=self.window):
             return
 
+        # v0.1.7: 이관해도 이 창에서 보던 순서(먼저 등록한 것이 위) 그대로 현황판에 놓는다.
+        # 예전에는 카드마다 제 등록 시각을 그대로 들고 넘어가서, 현황판이 `added_at`을
+        # 내림차순으로 다시 세우는 순간 마지막에 등록한 카드가 맨 위로 뒤집혔다.
+        # 그래서 한 번의 이관은 하나의 덩어리로 보고 이관 시각을 다 같이 물린 뒤,
+        # 덩어리 안에서만 도는 `order_key`에 음수 번호를 넣어 순서를 되돌려 놓는다.
+        # 등록 시각 자체는 `registered_at`에 그대로 남아 신규품목 창 표시가 바뀌지 않는다.
+        transferred_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         next_no = get_next_no(self.app.data)
         for item in ordered:
             item["no"] = next_no
             item.pop("draft_no", None)
+            item["added_at"] = transferred_at
+            item["order_key"] = -next_no
             item["save_pending"] = True
             self.app.data.append(item)
             next_no += 1

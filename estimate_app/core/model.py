@@ -172,9 +172,16 @@ def filter_items(items, query):
     나중에 올린 카드가 위로, 먼저 올린 카드가 아래로 쌓인다(요청 1-1, 1-2).
     업로드는 한 번에 여러 건이 같은 초에 들어와 `added_at`만으로는 순서가 흔들리므로,
     2차 키로 카드 번호를 함께 내림차순 정렬해 순서를 고정한다.
+
+    v0.1.7: 2차 키를 `order_key`로 한 겹 열어 둔다. 같은 `added_at`을 공유하는 한 덩어리
+    안에서 어느 방향으로 늘어놓을지를 넣는 쪽이 정할 수 있게 하려는 것이다. 값이 없으면
+    예전처럼 카드 번호를 그대로 쓰므로(업로드·기존 세션) 동작은 달라지지 않는다.
+    신규품목 이관만 음수 번호를 넣어, 내림차순 정렬 아래에서도 먼저 등록한 카드가 위에
+    오도록 뒤집는다(`new_items_dialog.transfer_all`).
     """
     all_items = [item for item in items if has_item_data(item)]
-    all_items.sort(key=lambda item: (item.get("added_at", ""), item.get("no", 0)), reverse=True)
+    all_items.sort(key=lambda item: (item.get("added_at", ""),
+                                     item.get("order_key", item.get("no", 0))), reverse=True)
     visible_items = [item for item in all_items if item_matches_search(item, query)]
     return all_items, visible_items
 

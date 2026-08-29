@@ -1490,3 +1490,51 @@
 - `git push origin Estimate`: 성공.
 - push 직후 `HEAD`와 `@{upstream}`은 `2578650c72367052e4ee772a0b709c5ea9209fff`로 일치했고 ahead/behind는 `0 0`이었다.
 - 이 완료 기록은 별도 문서 후속 커밋으로 남긴다.
+
+## 2026-08-30 v0.1.7 신규품목 이관 순서 보존 완료
+
+### 승인 및 변경 파일
+
+- 사용자 승인에 따라 버전을 `v0.1.7`로 올렸다.
+- 승인된 선택지
+  - 이관된 신규품목 블록은 현황판 **최상단**에 놓는다.
+  - 기존 견적 배열(엑셀 업로드) 정렬은 **현행 유지**한다.
+- 변경: `estimate_app/core/model.py`, `estimate_app/ui/new_items_dialog.py`,
+  `estimate_app/__init__.py`, `installer/Setup.iss`.
+- 계획·검증 기록: 이 문서 및 `plan.md`.
+
+### 문제
+
+- 신규품목 창은 `sort_new_items()`로 먼저 등록한 품목부터(오름차순) 보여 준다.
+- 그런데 현황판은 `filter_items()`가 `(added_at, no)`를 내림차순으로 다시 세운다.
+- 이관할 때 카드마다 제 등록 시각을 그대로 들고 넘어가므로, 현황판에 올라가는 순간
+  마지막에 등록한 카드가 맨 위로 뒤집혔다. 신규품목 창에서 보던 순서가 보존되지 않았다.
+
+### 수정 내용
+
+1. `estimate_app/core/model.py` — `filter_items()`
+   - 2차 정렬 키를 `no` 고정에서 `item.get("order_key", item.get("no", 0))`으로 바꿨다.
+   - 같은 `added_at`을 공유하는 한 덩어리 안에서 늘어놓을 방향을 넣는 쪽이 정하게 한 것이다.
+   - 값이 없으면 예전처럼 카드 번호를 쓴다. 업로드 항목과 옛 세션은 동작이 달라지지 않는다.
+2. `estimate_app/ui/new_items_dialog.py` — `transfer_all()`
+   - 한 번의 이관을 하나의 덩어리로 보고, 이관 시각(`%Y-%m-%d %H:%M:%S.%f`)을
+     그 덩어리 전체의 `added_at`에 똑같이 물렸다. 덩어리가 통째로 최상단에 놓인다.
+   - 등록 순서대로 `no`를 매기고 `order_key = -no`를 넣어, 내림차순 정렬 아래에서도
+     먼저 등록한 카드가 위에 오도록 덩어리 안에서만 순서를 되돌렸다.
+   - `registered_at`은 건드리지 않았다. 신규품목 창의 "등록 시각" 표시는 그대로다.
+3. 버전
+   - `APP_VERSION = "0.1.7"`.
+   - Inno Setup `MyAppVersion = "0.1.7"`.
+
+### 검증
+
+- `python -m compileall -q estimate_app main.py`: 통과.
+- 정렬 시나리오 5종 스크립트 검증(임시 스크립트, 검증 후 삭제): 전부 통과.
+  1. 업로드 3건 현행 유지 — `UP-3, UP-2, UP-1`(마지막 카드가 위).
+  2. 신규품목 3건 이관 — `NEW-1, NEW-2, NEW-3, UP-3, UP-2, UP-1`.
+     신규 블록이 최상단이고 블록 안은 등록 순서대로다.
+  3. 2차 이관 2건 — `NEW-4, NEW-5, NEW-1, NEW-2, NEW-3, ...`. 새 블록이 최상단이다.
+  4. 하위 호환 — `order_key` 없는 옛 세션 항목이 섞여도 기존 순서 그대로다.
+  5. 검색 필터 적용 후에도 순서가 유지된다.
+- 세션 저장/복원: `session.save()`는 항목 dict를 통째로 담고 `load()`는 `item.update()`로
+  되돌리므로 `order_key`가 그대로 살아남는다(코드 확인).
