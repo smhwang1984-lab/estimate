@@ -1538,3 +1538,12 @@
   5. 검색 필터 적용 후에도 순서가 유지된다.
 - 세션 저장/복원: `session.save()`는 항목 dict를 통째로 담고 `load()`는 `item.update()`로
   되돌리므로 `order_key`가 그대로 살아남는다(코드 확인).
+
+### Git 결과 및 최종 설치 파일
+
+- `Estimate` 브랜치에 `worktree-v0.1.7-new-item-order`를 fast-forward 병합했다(커밋 `d5d5be6`).
+- `git push origin Estimate`: 성공 (`5ffce37..d5d5be6`).
+- `build.bat setup`으로 PyInstaller(onedir) + Inno Setup을 실행해 최종 설치 파일을 만들었다.
+  - `installer\Output\MachineEstimate_Setup_v0.1.7.exe`
+  - 크기: `10,510,136 bytes`
+  - SHA-256: `2E5842A952C1A68B52E9FDE8FD648B1D89A824079BE38409B348C6D6F5A5E63`
