@@ -2,7 +2,7 @@
 
 v0.0.7부터 열 위치를 코드에 고정하지 않는다. `resolve_columns()`가 6행 헤더 문구를 읽어
 이 파일이 실제로 어떤 배치인지 그때그때 판단한다. 예전에 쓰던 다른 배치의 양식
-(기종 열이 없거나, 치구/프로그램이 한 칸으로 합쳐진 구버전 등)을 업로드해도
+(기종 열이 없거나, 치구/프로그램이 한 칸으로 합쳐진 구버전 등)을 다뤄도
 엉뚱한 열에 값이 들어가지 않게 하기 위해서다.
 
 행이 모자라면 openpyxl의 insert_rows를 쓰지 않는다. 병합 범위가 따라가지 않는 것을
@@ -17,7 +17,6 @@ v0.1.6: 원본 양식의 계산 구조를 유지하도록 순번·금액·합계
 """
 
 import os
-import re
 from copy import copy
 from datetime import datetime
 
@@ -27,7 +26,7 @@ from openpyxl.utils import get_column_letter, range_boundaries
 
 from . import paths, settings as settings_store
 from .config import MACHINE_KEYS
-from .model import create_blank_item, material_text, safe_float, safe_int
+from .model import material_text
 from .pricing import calc_row
 
 SHEET_NAME = "기계"
@@ -70,9 +69,6 @@ ES_SUPPLIER_CELLS = [
     ("F9", "담당자 : {value}", "contact"),
 ]
 ES_DATE_CELL = "B7"  # 기계 시트 푸터의 날짜를 참조한다(=기계!Q##).
-
-# Material 칸에 붙여 둔 경도 표기를 되읽기 위한 규칙. `HRC58~62`, `HRC 58 ~ 62`, `HRC58` 모두 받는다.
-HRC_PATTERN = re.compile(r"\s*HRC\s*([\d.]+)?\s*(?:~|-)?\s*([\d.]+)?\s*$", re.IGNORECASE)
 
 # 헤더 문구가 살짝 달라도(구버전 양식 등) 찾아내기 위한 부분 일치 키워드.
 # 앞쪽 항목이 우선한다 -- '프로그램 및치구'처럼 한 칸에 합쳐진 헤더는 먼저 매칭되는
@@ -521,70 +517,6 @@ def sync_estimate_sheet(es, gigye_ws, gigye_cols, gigye_summary_row):
         price_letter = get_column_letter(ES_COLS["final_price"])
         es.cell(row=summary_row, column=ES_COLS["final_price"]).value = (
             f"=SUM({price_letter}{ES_FIRST_ROW}:{price_letter}{summary_row - 1})")
-
-
-# ---------- 읽기 ----------
-
-def split_material(text):
-    """Material 칸 문자열을 (소재, 열처리여부, HRC Min, HRC Max)로 나눈다.
-
-    저장할 때 붙인 `HRC58~62`를 그대로 다시 카드로 되돌리기 위한 것이다.
-    경도 표기가 없으면 소재만 돌려주고 열처리는 꺼진 상태가 된다.
-    """
-    text = str(text or "").strip()
-    if not text:
-        return "", False, "", ""
-    match = HRC_PATTERN.search(text)
-    if not match:
-        return text, False, "", ""
-    low, high = match.group(1) or "", match.group(2) or ""
-    if not low and not high:
-        # `HRC`만 적혀 있는 경우. 열처리는 켜 두되 값은 비운다.
-        return text[:match.start()].strip(), True, "", ""
-    if not high:
-        # `HRC58` 한쪽만 적힌 경우는 Min으로 본다.
-        return text[:match.start()].strip(), True, low, ""
-    return text[:match.start()].strip(), True, low, high
-
-
-def read_cards_from_workbook(file_path):
-    """업로드한 기계 시트에서 입력된 행만 카드로 읽어 온다."""
-    wb = _openpyxl().load_workbook(file_path, data_only=False)
-    ws = _get_sheet(wb, SHEET_NAME)
-    cols = resolve_columns(ws, settings_store.load().get("headers"))
-    summary_row = find_summary_row(ws, cols)
-    abs_path = os.path.abspath(file_path)
-    created_at = datetime.fromtimestamp(os.path.getmtime(abs_path)).strftime("%Y-%m-%d")
-    source_month = os.path.basename(os.path.dirname(abs_path))
-    size_span = _merge_span(ws, HEADER_ROW, cols["size"]) if cols["size"] else 0
-
-    cards = []
-    for row in range(FIRST_DATA_ROW, summary_row):
-        if not row_has_input_data(ws, row, cols):
-            continue
-        item = create_blank_item(len(cards) + 1)
-        item["created_at"] = created_at
-        item["source_file"] = os.path.basename(abs_path)
-        item["source_month"] = source_month
-        item["save_pending"] = True
-        item["model"] = str(ws.cell(row=row, column=cols["model"]).value or "") if cols["model"] else ""
-        item["part_no"] = str(ws.cell(row=row, column=cols["part_no"]).value or "") if cols["part_no"] else ""
-        item["part_name"] = (str(ws.cell(row=row, column=cols["part_name"]).value or "")
-                             if cols["part_name"] else "")
-        item["comment"] = str(ws.cell(row=row, column=cols["comment"]).value or "") if cols["comment"] else ""
-        item["possible"] = (str(ws.cell(row=row, column=cols["possible"]).value or "가능")
-                            if cols["possible"] else "가능")
-        item["qty"] = safe_int(ws.cell(row=row, column=cols["qty"]).value, 1) if cols["qty"] else 1
-        raw_material = (str(ws.cell(row=row, column=cols["material"]).value or "")
-                        if cols["material"] else "")
-        item["material"], item["heat_treat"], item["hrc_min"], item["hrc_max"] = split_material(raw_material)
-        if cols["size"] and size_span:
-            size_parts = [ws.cell(row=row, column=cols["size"] + i).value for i in range(size_span)]
-            item["size"] = " x ".join(str(v) for v in size_parts if v not in (None, ""))
-        for key, col in cols["machine"].items():
-            item[key] = safe_float(ws.cell(row=row, column=col).value) if col else 0.0
-        cards.append(item)
-    return cards
 
 
 # ---------- 쓰기 ----------

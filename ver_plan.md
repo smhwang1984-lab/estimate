@@ -1658,3 +1658,71 @@
   - `installer\Output\MachineEstimate_Setup_v0.1.8.exe`
   - 크기: `10,516,201 bytes`
   - SHA-256: `2958DFC2A30DF7227B560755EA6921032FB065A9EF2C8D3F262F16EC6AF0ED9E`
+
+## 2026-08-30 v0.1.9 다운로드 파일명 개선 및 기계 시트 업로드 제거 완료
+
+### 승인 및 변경 파일
+
+- 사용자 승인에 따라 버전을 `v0.1.9`로 올렸다.
+- 요청 1: 선택 다운로드 저장 시 `선택견적_(날짜)` 대신 `견적_날짜(대표품번외 n건)` 형태로.
+  사용자 정정: 이건 '선택 다운로드'(엑셀 내려받기)를 말하는 것이고, 견적 데이터 저장
+  (보관함, `견적_{날짜}`)은 그대로 둔다.
+- 요청 2: 불필요 버튼 제거 — '기계 시트 업로드' 버튼과 전용 코드를 모두 삭제.
+- 승인된 선택지
+  - n건 표기: 대표(맨 위 선택 항목)를 뺀 나머지 건수. 1건이면 "외 0건" 없이 품번만.
+  - 업로드 코드: 버튼 + 전용 코드(`upload_excel_file`, `read_cards_from_workbook`,
+    `split_material`) 모두 삭제. 출력 쪽과 공유하는 헬퍼(`resolve_columns`,
+    `find_summary_row`, `row_has_input_data`, `_merge_span`)는 유지.
+- 변경: `estimate_app/ui/dashboard.py`, `estimate_app/core/excel_io.py`,
+  `estimate_app/core/model.py`(주석 정리), `estimate_app/__init__.py`, `installer/Setup.iss`.
+
+### 수정 내용
+
+1. `estimate_app/ui/dashboard.py`
+   - 모듈 함수 `_download_file_name(items)`을 신설했다. 대표(맨 위 항목)의 품번 →
+     없으면 품명 → 둘 다 없으면 "미입력"을 쓰고, `core/library.sanitize_title()`로
+     파일명 금지문자(`\ / : * ? " < > |`)를 치환한다. 나머지 건수는 "…외 n건"(대표를
+     뺀 수)으로 붙이고, 1건이면 생략한다. `export_items`/`export_selected_items` 양쪽의
+     기본 파일명이 이 함수 하나로 통일된다.
+   - `upload_excel_file` 메서드(76줄)를 통째로 삭제했다. 헤더의 '기계 시트 업로드'
+     버튼도 없앴다.
+   - 빈 목록 안내문("상단의 '신규품목' 또는 '기계 시트 업로드'를 사용하세요")과 관련
+     주석 2곳에서 업로드 언급을 지웠다.
+   - 더는 안 쓰는 `get_next_no` import를 걷어냈다(업로드 삭제로 호출부가 사라졌다).
+   - `core.library`를 새로 import했다(`sanitize_title` 재사용, 순환 참조 없음을 확인).
+2. `estimate_app/core/excel_io.py`
+   - `read_cards_from_workbook`(38줄), `split_material`(HRC 표기 되읽기, 22줄),
+     그 전용 정규식 `HRC_PATTERN`을 삭제했다. 셋 다 업로드 전용이었고 출력(쓰기) 경로와
+     겹치지 않음을 grep으로 확인했다.
+   - 더는 안 쓰는 `re` 모듈 import와 `.model`의 `create_blank_item`/`safe_float`/
+     `safe_int` import를 걷어냈다(`material_text`만 여전히 쓴다).
+   - 모듈 docstring의 "업로드해도" 문구를 "다뤄도"로 고쳤다(`resolve_columns`는 출력
+     경로에서도 여러 배치의 양식을 다루므로 업로드 전용 설명이 아니다).
+3. `estimate_app/core/model.py`
+   - `filter_items` 문서에서 "업로드는 한 번에 여러 건이…" 문구를 "일괄 추가(신규품목
+     이관 등)는…"으로 고쳤다. 정렬 로직 자체(2차 키)는 그대로다 — 업로드가 없어져도
+     신규품목 이관(v0.1.7)이 같은 상황(여러 건이 같은 초에 들어옴)을 여전히 만든다.
+4. 버전
+   - `APP_VERSION = "0.1.9"`.
+   - Inno Setup `MyAppVersion = "0.1.9"`.
+
+### 검증
+
+- `python -m compileall -q estimate_app main.py` 통과.
+- 파일명 생성 시나리오 6종 스크립트 검증(임시 스크립트, 검증 후 삭제): 3건/1건/10건/
+  품명만 있는 경우/품번·품명 모두 없는 경우/품번에 금지문자(`/`, `:`, `*`)가 있는 경우
+  전부 기대값과 일치.
+- 실제 화면 실행(기능 스모크 테스트, 같은 프로세스에서 `EstimateApp` 직접 구동):
+  - 헤더 버튼 목록이 `☀️ 라이트 모드, 신규품목, 견적 불러오기, 견적 저장, 설정` 5개로
+    줄어 '기계 시트 업로드'가 빠졌음을 확인.
+  - `upload_excel_file`/`read_cards_from_workbook`/`split_material`이 더는 존재하지
+    않음(`hasattr` 확인).
+  - 빈 목록으로 만들어 안내문 갱신이 예외 없이 동작함을 확인.
+  - `_download_file_name` 실제 호출 결과가 스크립트 기대값과 일치.
+  - 설정창이 v0.1.8과 동일하게 8개 탭으로 예외 없이 열리고 닫힘(회귀 없음 확인).
+- 코드 검색으로 `estimate_app/**/*.py` 전체에서 "업로드" 문자열이 완전히 사라졌음을
+  재확인했다.
+- `%LOCALAPPDATA%\MachineEstimate\display_prefs.json`이 테스트 도중 다시 생겨 있었는데,
+  이번 테스트 코드는 그 파일을 쓰는 경로를 전혀 부르지 않았고 생성 시각도 v0.1.8 빌드
+  이후 한참 지난 시점이라 사용자가 실제 설치본으로 다크 모드를 눌러 본 흔적으로 보고
+  건드리지 않았다(지난번과 달리 삭제하지 않음).

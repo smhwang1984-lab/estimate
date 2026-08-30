@@ -2636,3 +2636,35 @@ GUI라 자동 테스트가 없으므로 v0.1.1에서 쓴 방식(실제 Tk 창을
   확인했다. 테스트가 만든 임시 `display_prefs.json`은 삭제해 사용자 환경에 흔적을
   남기지 않았다.
 - 상세 기록은 `ver_plan.md`의 같은 날짜 항목 참고.
+
+## 2026-08-30 v0.1.9 다운로드 파일명 개선 및 업로드 제거
+
+### 요청
+
+- 선택 다운로드 시 기본 파일명을 `선택견적_(날짜)`가 아니라
+  `견적_날짜(대표품번외 n건)` 형태로. 견적 저장(보관함)은 그대로 둔다(사용자 정정).
+- 불필요한 '기계 시트 업로드' 버튼과 그 코드를 제거한다.
+
+### 결정 (사용자 승인)
+
+- n건 = 대표(맨 위 선택 항목)를 뺀 나머지 건수. 1건이면 품번만 표기.
+- 업로드는 버튼과 전용 코드(`upload_excel_file`, `read_cards_from_workbook`,
+  `split_material`) 모두 삭제. 출력과 공유하는 헬퍼는 유지.
+
+### 조치
+
+- `dashboard.py`에 `_download_file_name(items)`을 신설해 다운로드 기본 파일명을
+  통일했다. `library.sanitize_title()`로 품번의 금지문자를 치환한다.
+- '기계 시트 업로드' 버튼과 `upload_excel_file`, `excel_io.read_cards_from_workbook`/
+  `split_material`을 삭제하고, 안내문·주석·안 쓰는 import를 정리했다.
+- 앱/설치 버전을 `0.1.9`로 갱신했다.
+
+### 검증
+
+- `python -m compileall -q estimate_app main.py` 통과.
+- 파일명 생성 6개 시나리오 전부 기대값과 일치.
+- 같은 프로세스에서 `EstimateApp`을 직접 구동해 헤더 버튼 목록(업로드 빠짐),
+  `upload_excel_file`/`read_cards_from_workbook`/`split_material` 부재, 빈 목록
+  안내문, 다운로드 파일명, 설정창 8개 탭(회귀 없음)까지 예외 없이 확인했다.
+- 코드 전체에서 "업로드" 문자열이 남아있지 않음을 재확인했다.
+- 상세 기록은 `ver_plan.md`의 같은 날짜 항목 참고.

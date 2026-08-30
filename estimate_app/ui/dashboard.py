@@ -7,8 +7,9 @@ from datetime import datetime
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from .. import APP_TITLE, APP_VERSION
-from ..core import datastore, display_prefs as display_prefs_store, excel_io, paths, session, settings as settings_store, updater
-from ..core.model import (create_blank_item, filter_items, find_duplicate_part_nos, get_next_no,
+from ..core import (datastore, display_prefs as display_prefs_store, excel_io, library, paths, session,
+                    settings as settings_store, updater)
+from ..core.model import (create_blank_item, filter_items, find_duplicate_part_nos,
                           has_item_data, normalize_part_no)
 from ..core.pricing import calc_total_amount
 from .condition_dialog import open_condition_dialog
@@ -19,6 +20,22 @@ from .settings_dialog import open_settings_dialog
 from .table import (COLUMNS, build_header, build_header_underline, configure_columns, create_row_slot,
                     hide_row_slot, paint_checkbox, render_empty_message, update_row_slot)
 from .theme import Theme
+
+
+def _download_file_name(items):
+    """다운로드 기본 파일명. v0.1.9 요청: `선택견적_날짜` 대신 대표 품번이 드러나야 한다.
+
+    대표는 맨 위(첫) 항목의 품번이다 -- export_selected_items가 화면에 보이는 차례
+    그대로 담으므로, 맨 위 카드가 엑셀에서도 첫 줄이자 사용자가 고른 것 중 가장 먼저
+    눈에 띄는 항목이다. 품번이 비어 있으면 품명, 둘 다 없으면 "미입력"으로 대신한다.
+    나머지 건수는 "…외 n건"(대표를 뺀 수)으로 붙인다 -- 1건이면 "외 0건" 대신 아예 뺀다.
+    """
+    lead = items[0] if items else {}
+    label = str(lead.get("part_no") or lead.get("part_name") or "미입력").strip() or "미입력"
+    label = library.sanitize_title(label) or "미입력"
+    rest = len(items) - 1
+    suffix = f"{label}외 {rest}건" if rest > 0 else label
+    return f"견적_{datetime.now():%Y-%m-%d}({suffix}).xlsx"
 
 
 class EstimateApp:
@@ -187,9 +204,6 @@ class EstimateApp:
         ttk.Button(actions, text=theme_label, command=self.toggle_theme_mode).pack(
             side=tk.LEFT, padx=(0, 10))
         ttk.Button(actions, text="신규품목", command=self.open_new_items).pack(side=tk.LEFT, padx=4)
-        ttk.Button(actions, text="기계 시트 업로드", command=self.upload_excel_file).pack(side=tk.LEFT, padx=4)
-        # v0.1.4: 견적 보관함. 파일을 다루는 동작이라 업로드 옆에 둔다(보조 기능 줄은
-        # 이미 다섯 개라 더 붙이면 좁은 화면에서 밀린다).
         ttk.Button(actions, text="견적 불러오기",
                    command=lambda: self.open_library("load")).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="견적 저장",
@@ -538,7 +552,7 @@ class EstimateApp:
         """목록을 다시 그린다. 위젯을 지웠다 새로 만들지 않고 슬롯 풀을 재사용한다.
 
         reset_limit=True는 "목록의 내용 자체가 바뀌었다"는 신호로도 쓴다(검색·검색초기화·
-        업로드 등). 그때만 스크롤을 맨 위로 되돌린다 — 더보기·체크 토글에서 스크롤이
+        견적 불러오기 등). 그때만 스크롤을 맨 위로 되돌린다 — 더보기·체크 토글에서 스크롤이
         튀면 오히려 불편하기 때문이다.
         """
         self.search_after_id = None
@@ -553,7 +567,7 @@ class EstimateApp:
         if not all_items:
             self._hide_rows()
             self._show_empty("아직 작성된 견적 항목이 없습니다.",
-                             "상단의 '신규품목' 또는 '기계 시트 업로드'를 사용하세요.")
+                             "상단의 '신규품목'을 사용하세요.")
             if reset_limit:
                 self.row_canvas.yview_moveto(0)
             return
@@ -800,7 +814,7 @@ class EstimateApp:
     def undo_delete(self):
         """방금 지운 카드를 되살린다(단일 단계, 세션에는 안 남기고 메모리에만 둔다).
 
-        지운 뒤 `새 항목 추가`/`저장 후 다음 항목`/`기계 시트 업로드`로 새 카드가
+        지운 뒤 `새 항목 추가`/`저장 후 다음 항목`으로 새 카드가
         생겼으면 get_next_no()가 방금 비운 번호를 다시 내줬을 수 있다(요청 확인한
         구조 (6)). 그 경우 되살리면 번호가 겹치므로, 되살리는 이 시점에 겹치는지
         검사한다 -- 번호를 새로 만드는 쪽(add_row 등) 코드를 일일이 손대지 않아도
@@ -827,80 +841,6 @@ class EstimateApp:
 
     # ---------- 엑셀 ----------
 
-    def upload_excel_file(self):
-        """기계 시트를 카드로 불러온다. v0.1.3부터 여러 파일을 한 번에 고를 수 있다(요청 2).
-
-        읽기를 다 끝낸 뒤에 한꺼번에 붙인다 -- 파일마다 읽고 바로 붙이면 세 번째 파일에서
-        오류가 났을 때 앞의 두 개만 들어간 채로 멈춘다(업로드는 되돌리기 대상이 아니라
-        사용자가 직접 지워야 한다). 한 파일이 실패해도 나머지는 살리고, 무엇이 실패했는지
-        마지막에 함께 알린다.
-
-        고른 순서대로 읽어 그 순서대로 번호를 매긴다. 화면에서는 나중에 들어온 카드가 위로
-        올라오므로(`filter_items`), 마지막에 고른 파일이 목록 맨 위에 놓인다.
-        """
-        file_paths = filedialog.askopenfilenames(
-            title="업로드할 견적 양식 선택 (여러 개 선택 가능)",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")])
-        # Tk 구현에 따라 튜플이 아니라 Tcl 리스트 문자열이 오는 경우가 있어 한 번 걸러 준다.
-        if isinstance(file_paths, str):
-            file_paths = self.root.tk.splitlist(file_paths) if file_paths else ()
-        if not file_paths:
-            return
-
-        loaded, empty_files, failed = [], [], []
-        for file_path in file_paths:
-            name = os.path.basename(file_path)
-            try:
-                cards = excel_io.read_cards_from_workbook(file_path)
-            except Exception as exc:
-                failed.append((name, exc))
-                continue
-            if cards:
-                loaded.append((name, cards))
-            else:
-                empty_files.append(name)
-
-        total = sum(len(cards) for _, cards in loaded)
-        if not total:
-            detail = "\n".join([f"  {name}: {exc}" for name, exc in failed]
-                               + [f"  {name}: 입력된 항목 없음" for name in empty_files])
-            messagebox.showwarning("업로드 안내",
-                                   f"불러온 항목이 없습니다.\n\n{detail}")
-            return
-
-        summary = "\n".join(f"  {name}  {len(cards)}건" for name, cards in loaded)
-        if failed or empty_files:
-            summary += "\n\n[불러오지 못한 파일]\n" + "\n".join(
-                [f"  {name}: {exc}" for name, exc in failed]
-                + [f"  {name}: 입력된 항목 없음" for name in empty_files])
-        # 빈 목록에 파일 하나를 무사히 읽어 온 경우는 예전처럼 묻지 않고 바로 넣는다
-        # (되돌릴 것도, 고를 것도 없는 상황이라 확인창이 걸리적거리기만 한다).
-        need_confirm = bool(self.data) or len(loaded) > 1 or failed or empty_files
-        if need_confirm and not messagebox.askyesno(
-                "업로드 확인",
-                f"파일 {len(loaded)}개에서 {total}개 항목을 찾았습니다.\n\n{summary}\n\n"
-                f"현재 카드 목록에 추가하시겠습니까?"):
-            return
-
-        next_no = get_next_no(self.data)
-        for _, cards in loaded:
-            for item in cards:
-                item["no"] = next_no
-                item["save_pending"] = True
-                item["is_new_registration"] = False
-                self.data.append(item)
-                next_no += 1
-        self.save_session()
-        self.refresh_table(True)
-
-        duplicate_note = ""
-        if self.duplicate_part_nos:
-            duplicate_note = ("\n\n품번이 겹치는 항목이 있어 해당 행을 색으로 표시했습니다"
-                              " (요약줄의 '품번 중복' 건수 참고).")
-        messagebox.showinfo("업로드 완료",
-                            f"파일 {len(loaded)}개에서 {total}개 항목을 카드로 불러왔습니다.\n"
-                            f"방금 올린 항목이 목록 맨 위에 쌓입니다.{duplicate_note}")
-
     def export_items(self, items, default_name=None, parent=None):
         """고른 항목을 엑셀 견적 파일로 내려받는다(v0.0.9: PDF 출력은 없앴다, 요청 3-1)."""
         if not items:
@@ -908,7 +848,7 @@ class EstimateApp:
             return False
         parent = parent or self.root
 
-        base_name = os.path.splitext(default_name or f"선택견적_{datetime.now():%Y-%m-%d}.xlsx")[0]
+        base_name = os.path.splitext(default_name or _download_file_name(items))[0]
         chosen_path = filedialog.asksaveasfilename(
             parent=parent,
             title="다운로드 저장 위치 선택",
@@ -948,7 +888,7 @@ class EstimateApp:
         selected_items = [item for item in visible_items
                           if has_item_data(item) and item["no"] in self.selected_nos]
         self.export_items(selected_items,
-                          default_name=f"선택견적_{datetime.now():%Y-%m-%d}.xlsx",
+                          default_name=_download_file_name(selected_items),
                           parent=self.root)
 
     # ---------- 업데이트 ----------
