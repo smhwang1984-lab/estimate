@@ -2588,3 +2588,51 @@ GUI라 자동 테스트가 없으므로 v0.1.1에서 쓴 방식(실제 Tk 창을
 - `python -m compileall -q estimate_app main.py` 통과.
 - 정렬 시나리오 5종(업로드 현행 유지 / 1차 이관 / 2차 이관 / 하위 호환 / 검색) 전부 통과.
 - 상세 기록은 `ver_plan.md`의 같은 날짜 항목 참고.
+
+## 2026-08-30 v0.1.8 TSERP 스타일 UI
+
+### 요청
+
+- 추가 기능·UI 개선 후 정리. TSERP(사내 다른 프로그램)처럼 다크/라이트 모드, 열
+  구분선 활성화/비활성화 같은 화면 표시 설정을 넣고 UI 자체도 TSERP 스타일로 맞춘다.
+
+### 조사
+
+- TSERP `py/web/style.css`/`app.js`를 분석해 다크/라이트 색상표와
+  `UI_DISPLAY_PREFS`(dividers/rowColors/fontScale) 구조, PC 로컬 전용 저장 방식,
+  사용 설명서 모달의 알약형 토글 UI 패턴을 확인했다.
+- Estimate의 `ui/table.py`는 이미 TSERP `#tbl` 값을 옮긴 것이었고, `theme.json`에는
+  옛 TSERP Deep Charcoal 다크 팔레트가 `presets.dark`로 참고용으로만 있었다(런타임
+  전환 배선은 없었음).
+
+### 결정 (사용자 승인)
+
+- 헤더 그라데이션 폐지 → TSERP식 평면 배경.
+- 행 색상은 토글 없이 회색/흰색 단순 교차로 고정.
+- 전환은 즉시 반영, 기본 모드는 라이트.
+- 설정창에 '화면 표시' 탭 신설(다크/라이트, 열 구분선, 표 글자 배율 3종).
+
+### 조치
+
+- `theme.json`을 `themes.light`/`themes.dark` 두 팔레트로 나누고 TSERP 실값으로 정렬,
+  `col_divider` 토큰을 추가했다.
+- `core/display_prefs.py`를 신설해 이 값들을 `settings.json`(공유 폴더 가능)과 분리해
+  PC 로컬에만 저장한다.
+- `Theme`에 `reload(mode)`/`set_font_scale()`을 추가하고, `dashboard.py`는 본문을
+  `main_container` 프레임으로 감싸 전환 시 그 프레임만 다시 지어 설정창·입력창 같은
+  다른 Toplevel이 같이 닫히지 않게 했다.
+- `table.py`에 데이터 행 열 구분선(헤더 폭 조절 손잡이와 같은 `grid_bbox` 기반 배치)을
+  추가했고, `settings_dialog.py`에 '화면 표시' 탭을 신설했다.
+- 앱/설치 버전을 `0.1.8`로 갱신했다.
+
+### 검증
+
+- `python -m compileall -q estimate_app main.py` 통과.
+- `python main.py`로 실행한 라이트 모드 화면을 스크린샷으로 확인(평면 헤더, 토글
+  버튼, 열 구분선, 줄무늬 정상).
+- 창 포커스 문제로 다크 모드·설정창 화면 캡처는 안전하게 재현하지 못해, 같은
+  프로세스 안에서 `EstimateApp`을 직접 구동하는 기능 테스트로 대체해 다크/라이트
+  전환·글자 배율·구분선 on/off·설정창 8개 탭(화면 표시 포함) 선택까지 예외 없이
+  확인했다. 테스트가 만든 임시 `display_prefs.json`은 삭제해 사용자 환경에 흔적을
+  남기지 않았다.
+- 상세 기록은 `ver_plan.md`의 같은 날짜 항목 참고.

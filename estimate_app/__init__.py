@@ -6,5 +6,5 @@
     assets/ theme.json(색상/폰트) · rates.json(단가) 등 편집 가능한 설정 파일
 """
 
-APP_VERSION = "0.1.7"
+APP_VERSION = "0.1.8"
 APP_TITLE = "Estimate(견적)"

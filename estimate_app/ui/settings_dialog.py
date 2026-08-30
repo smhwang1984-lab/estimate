@@ -16,7 +16,7 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from ..core import config, datastore, settings as settings_store
+from ..core import config, datastore, display_prefs as display_prefs_store, settings as settings_store
 from ..core.model import parse_number
 
 # 데이터 위치 변경 결과를 사람이 읽는 문장으로. 어느 쪽 설정이 이겼는지 반드시 알린다 --
@@ -224,6 +224,93 @@ def _build_machine_spec_row(parent, machine_current):
     ttk.Label(box, text="최고 회전수(RPM)").pack(side=tk.LEFT)
     ttk.Entry(box, textvariable=variables["max_rpm"], width=8).pack(side=tk.LEFT, padx=(4, 0))
     return variables
+
+
+def _build_display_tab(notebook, app, dialog):
+    """화면 표시 탭(v0.1.8, TSERP '화면 표시 설정'과 같은 자리 -- 다크/라이트, 표 구분선,
+    표 글자 크기 배율).
+
+    '데이터 위치' 탭과 같은 이유로 아래 [저장] 버튼과 무관하게 누르는 즉시 적용된다.
+    값은 core/display_prefs.py를 통해 이 PC에만 저장한다(settings.json은 공유 폴더로
+    옮길 수 있어서 화면 취향까지 같이 담으면 안 된다).
+    """
+    tab = ttk.Frame(notebook, padding=14)
+    notebook.add(tab, text="화면 표시")
+
+    ttk.Label(tab, wraplength=760, justify="left", style="Muted.TLabel",
+              text="다크/라이트, 표 구분선, 표 글자 크기는 이 PC에만 저장되며 버튼을 누르는"
+                   " 즉시 적용됩니다."
+              ).pack(anchor="w", pady=(0, 16))
+
+    pills = {}
+    # TSERP 사용 설명서의 "화면 표시 설정" 토글과 같은 색 규칙이다 -- 켬은 초록, 끔은 빨강.
+    _PILL_PALETTE = {
+        "light": {"on": ("#e8f6ef", "#2c8c55", "#217544"), "off": ("#fff0f1", "#d85c68", "#b0203a")},
+        "dark": {"on": ("#12261a", "#3ecf8e", "#7ddc9e"), "off": ("#2b1820", "#5c2c2c", "#ff9aa2")},
+    }
+
+    def style_pill(key, label, is_on):
+        bg, border, fg = _PILL_PALETTE[app.theme.mode]["on" if is_on else "off"]
+        icon = "●" if is_on else "○"
+        state_word = "켬" if is_on else "끔"
+        pills[key].configure(text=f"{icon}  {label}   {state_word}", bg=bg, fg=fg,
+                             activebackground=bg, activeforeground=fg,
+                             highlightbackground=border, highlightcolor=border)
+
+    def make_pill(parent, key, label, is_on, on_click):
+        button = tk.Button(parent, bd=0, relief="flat", cursor="hand2", padx=16, pady=10,
+                           font=app.theme.bold, highlightthickness=1, command=on_click)
+        button.pack(side=tk.LEFT, padx=(0, 10))
+        pills[key] = button
+        style_pill(key, label, is_on)
+
+    def refresh_pills():
+        style_pill("theme", "다크 모드", app.theme.mode == "dark")
+        style_pill("dividers", "표 구분선", app.display_prefs.get("dividers", True))
+
+    def toggle_theme():
+        app.toggle_theme_mode()
+        refresh_pills()
+
+    def toggle_dividers():
+        app.apply_divider_pref(not app.display_prefs.get("dividers", True))
+        refresh_pills()
+
+    pill_row = ttk.Frame(tab)
+    pill_row.pack(fill=tk.X, pady=(0, 16))
+    make_pill(pill_row, "theme", "다크 모드", app.theme.mode == "dark", toggle_theme)
+    make_pill(pill_row, "dividers", "표 구분선", app.display_prefs.get("dividers", True), toggle_dividers)
+
+    scale_box = ttk.LabelFrame(tab, text="표 글자 크기", padding=12)
+    scale_box.pack(fill=tk.X)
+    scale_row = ttk.Frame(scale_box)
+    scale_row.pack(anchor="w")
+    scale_var = tk.StringVar(value=f"{app.theme.font_scale}%")
+
+    def nudge_scale(delta):
+        app.apply_font_scale(app.theme.font_scale + delta)
+        scale_var.set(f"{app.theme.font_scale}%")
+
+    def reset_scale():
+        app.apply_font_scale(display_prefs_store.DEFAULT_FONT_SCALE)
+        scale_var.set(f"{app.theme.font_scale}%")
+
+    ttk.Button(scale_row, text="−", width=3,
+               command=lambda: nudge_scale(-display_prefs_store.FONT_SCALE_STEP)).pack(side=tk.LEFT)
+    ttk.Label(scale_row, textvariable=scale_var, width=6, anchor="center",
+             font=app.theme.bold).pack(side=tk.LEFT, padx=6)
+    ttk.Button(scale_row, text="+", width=3,
+               command=lambda: nudge_scale(display_prefs_store.FONT_SCALE_STEP)).pack(side=tk.LEFT)
+    ttk.Button(scale_row, text="100%로 초기화", command=reset_scale).pack(side=tk.LEFT, padx=(14, 0))
+    ttk.Label(scale_box, style="Muted.TLabel",
+              text=f"{display_prefs_store.FONT_SCALE_MIN}~{display_prefs_store.FONT_SCALE_MAX}%,"
+                   f" {display_prefs_store.FONT_SCALE_STEP}% 단위로 바뀝니다."
+                   " 단축키 Ctrl+ =(키우기) / Ctrl+ -(줄이기) / Ctrl+0(초기화)."
+              ).pack(anchor="w", pady=(8, 0))
+
+    ttk.Label(tab, style="Muted.TLabel",
+              text="이 PC에만 저장되며 업데이트 후에도 유지됩니다."
+              ).pack(anchor="w", pady=(16, 0))
 
 
 def _build_location_tab(notebook, app, dialog):
@@ -619,7 +706,12 @@ def open_settings_dialog(app):
     ttk.Label(column_tab,
               text=f"열 폭이 망가져 설정 버튼을 누르기 어렵다면 {settings_store.get_settings_path()} 파일을 삭제하면 기본값으로 복구됩니다.",
               style="Muted.TLabel", wraplength=820, justify="left").pack(anchor="w", pady=(12, 0))
-    # ---------- 6) 데이터 위치 (v0.1.4) ----------
+    # ---------- 6) 화면 표시 (v0.1.8) ----------
+    # 이 탭도 '저장' 버튼과 무관하게 즉시 적용된다. 다만 데이터 위치 탭과 달리 다른 값을
+    # 낡게 만들지 않으므로 창을 닫지 않는다.
+    _build_display_tab(notebook, app, dialog)
+
+    # ---------- 7) 데이터 위치 (v0.1.4) ----------
     # 이 탭만 '저장' 버튼과 무관하게 즉시 적용된다. 폴더를 바꾸는 순간 다른 탭이 들고 있는
     # 값(옛 폴더에서 읽은 단가 등)이 통째로 낡기 때문에, 적용하면 이 창을 닫고 새로 열게 한다.
     _build_location_tab(notebook, app, dialog)

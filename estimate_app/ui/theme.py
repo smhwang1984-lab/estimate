@@ -11,40 +11,78 @@ from ..core import config
 
 
 class Theme:
-    def __init__(self):
-        data = config.load_theme()
+    def __init__(self, mode=config.DEFAULT_THEME_MODE, font_scale=100):
+        self.mode = mode if mode in config.THEME_MODES else config.DEFAULT_THEME_MODE
+        self.font_scale = font_scale if font_scale else 100
+        data = config.load_theme(self.mode)
         self.colors = data["colors"]
         self.fonts = data["fonts"]
         self.layout = data["layout"]
-        family = self.fonts["family"]
+        self._build_fonts()
+
+    def _build_fonts(self):
+        """글꼴 튜플을 전부 (다시) 만든다. __init__과 표 글자 배율 변경이 함께 쓴다.
+
+        v0.1.8: 표 글자 크기 배율(요청)은 현황판 글꼴에만 건다 -- 버튼·안내문까지
+        같이 커지면 툴바가 밀려서다(TSERP도 이 배율은 표·상세 패널 전용이다).
+        """
+        fonts = self.fonts
+        family = fonts["family"]
         self.family = family
-        self.normal = (family, self.fonts["normal_size"])
-        self.bold = (family, self.fonts["normal_size"], "bold")
-        self.small = (family, self.fonts["small_size"], "bold")
-        self.title = (family, self.fonts["title_size"], "bold")
-        self.card_title = (family, self.fonts["card_title_size"], "bold")
+        self.normal = (family, fonts["normal_size"])
+        self.bold = (family, fonts["normal_size"], "bold")
+        self.small = (family, fonts["small_size"], "bold")
+        self.title = (family, fonts["title_size"], "bold")
+        self.card_title = (family, fonts["card_title_size"], "bold")
+
         # 표 글꼴. Tk에서 크기를 음수로 주면 pt가 아니라 픽셀 단위가 되어
         # TSERP의 CSS px 값(th 18px / td 17px)을 그대로 맞출 수 있다.
-        table_family = self.fonts["table_family"]
-        self.table_head = (table_family, -self.fonts["table_head_px"], "bold")
-        self.table_cell = (table_family, -self.fonts["table_cell_px"])
+        table_family = fonts["table_family"]
+        scale = self.font_scale / 100
+
+        def scaled_px(key):
+            return max(8, round(fonts[key] * scale))
+
+        self.table_head_px = scaled_px("table_head_px")
+        self.table_cell_px = scaled_px("table_cell_px")
+        self.table_sub_px = scaled_px("table_sub_px")
+        self.badge_px = scaled_px("badge_px")
+
+        self.table_head = (table_family, -self.table_head_px, "bold")
+        self.table_cell = (table_family, -self.table_cell_px)
         # 소재 칸 자르기(요청 3-4)가 실제 글꼴 폭으로 재도록 Font 객체도 만들어 둔다
         # (table_cell은 튜플이라 .measure()가 없다).
         self.table_cell_font = tkfont.Font(font=self.table_cell)
-        self.table_cell_bold = (table_family, -self.fonts["table_cell_px"], "bold")
-        self.table_sub = (table_family, -self.fonts["table_sub_px"])
-        self.pane_head = (family, -self.fonts["pane_head_px"], "bold")
-        self.badge = (family, -self.fonts["badge_px"])
-        self.badge_bold = (family, -self.fonts["badge_px"], "bold")
+        self.table_cell_bold = (table_family, -self.table_cell_px, "bold")
+        self.table_sub = (table_family, -self.table_sub_px)
+        self.pane_head = (family, -fonts["pane_head_px"], "bold")
+        self.badge = (family, -self.badge_px)
+        self.badge_bold = (family, -self.badge_px, "bold")
         # 금액처럼 자릿수를 맞춰야 하는 값만 고정폭 글꼴(num_family)을 쓴다.
-        num_family = self.fonts.get("num_family", table_family)
-        self.table_num_bold = (num_family, -self.fonts["table_cell_px"], "bold")
-        self.value_num = (num_family, self.fonts["normal_size"], "bold")
-        # 헤더 바 위에 얹는 글자(그라데이션 배경용).
-        self.header_title = (family, self.fonts["title_size"], "bold")
+        num_family = fonts.get("num_family", table_family)
+        self.table_num_bold = (num_family, -self.table_cell_px, "bold")
+        self.value_num = (num_family, fonts["normal_size"], "bold")
+        self.header_title = (family, fonts["title_size"], "bold")
 
     def color(self, key):
         return self.colors[key]
+
+    def reload(self, mode):
+        """다크/라이트를 전환한다. 글꼴·레이아웃은 그대로 두고 팔레트만 다시 읽는다."""
+        if mode not in config.THEME_MODES or mode == self.mode:
+            return False
+        self.mode = mode
+        self.colors = config.load_theme(mode)["colors"]
+        return True
+
+    def set_font_scale(self, font_scale):
+        """표 글자 크기 배율을 바꾼다. 위젯에 이미 박힌 글꼴은 화면을 다시 지어야 반영된다
+        (dashboard.apply_font_scale 참고)."""
+        if font_scale == self.font_scale:
+            return False
+        self.font_scale = font_scale
+        self._build_fonts()
+        return True
 
     def get_status_colors(self, status):
         """가능여부에 따른 (배경, 글자, 테두리) 색."""
@@ -100,30 +138,3 @@ class Theme:
         root.option_add("*TCombobox*Listbox.foreground", c["text"])
         root.option_add("*TCombobox*Listbox.selectBackground", c["accent"])
         root.option_add("*TCombobox*Listbox.selectForeground", c["bg"])
-
-    def paint_gradient(self, canvas, width, height):
-        """캔버스에 grad_from -> grad_to 좌->우 그라데이션을 한 줄씩 그린다.
-
-        PIL 없이 Canvas.create_line만으로 그린다(v0.0.8: 배포 용량을 늘리지 않기 위해).
-        폭이 바뀔 때만 다시 부르면 되고, 세로 크기 변화에는 다시 그릴 필요가 없다.
-        """
-        canvas.delete("gradient")
-        if width <= 0 or height <= 0:
-            return
-        c = self.colors
-        r1, g1, b1 = self._hex_to_rgb(c["grad_from"])
-        r2, g2, b2 = self._hex_to_rgb(c["grad_to"])
-        step = max(1, width // 240)  # 폭이 커도 선을 240개 이하로 묶어 그리기 비용을 낮춘다.
-        for x in range(0, width, step):
-            t = x / max(1, width - 1)
-            r = round(r1 + (r2 - r1) * t)
-            g = round(g1 + (g2 - g1) * t)
-            b = round(b1 + (b2 - b1) * t)
-            canvas.create_line(x, 0, x, height, fill=f"#{r:02x}{g:02x}{b:02x}",
-                               width=step + 1, tags="gradient")
-        canvas.tag_lower("gradient")  # 제목·요약줄·버튼(먼저 만들어 둔 항목)이 항상 위에 오게
-
-    @staticmethod
-    def _hex_to_rgb(hex_color):
-        h = hex_color.lstrip("#")
-        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))

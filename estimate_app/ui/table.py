@@ -213,6 +213,11 @@ def _apply_column_widths(app):
         item = slot.get("item")
         if item is not None:
             _update_fitted_cell_text(app, slot, item)
+        # v0.1.8: 열 폭이 바뀌면(드래그) 구분선 위치도 같이 옮긴다. 폭이 안 바뀌는 창
+        # 크기 변화는 row의 <Configure>가 알아서 처리하지만, 드래그는 row 전체 폭이
+        # 그대로인 채 내부 경계만 움직이므로 <Configure>가 따로 안 온다.
+        if slot.get("divider_bars"):
+            _reposition_dividers(slot["frame"], slot["divider_bars"])
 
 
 def _persist_column_widths(app):
@@ -244,6 +249,22 @@ def _reposition_resizers(header, handles):
         # Canvas.lift()는 위젯이 아니라 캔버스 내부 item을 올리는 메서드라 인수가 필요하다.
         # Tk의 윈도우 raise 명령을 직접 써서 손잡이 위젯 자체를 제목 라벨 위로 올린다.
         header.tk.call("raise", handle._w)
+
+
+def _reposition_dividers(row, bars):
+    """데이터 행의 열 구분선(요청: '열 구분선 활성화/비활성화')을 열 경계에 맞춰 세운다.
+
+    헤더의 폭 조절 손잡이(_reposition_resizers)와 같은 방식이다 -- 그리드 칸의 실제
+    픽셀 폭을 grid_bbox로 재서 그 오른쪽 끝에 1px짜리 세로 막대를 얹는다. 마지막 열
+    뒤에는 선을 두지 않는다(요청 3-1과 같은 이유, bars 개수가 COLUMNS보다 하나 적다).
+    """
+    for idx, bar in enumerate(bars):
+        bbox = row.grid_bbox(row=0, column=idx)
+        if not bbox:
+            continue
+        x, _y, w, _h = bbox
+        bar.place(x=x + w - 1, y=0, width=1, relheight=1.0)
+        row.tk.call("raise", bar._w)
 
 
 def _capture_actual_column_widths(app, header):
@@ -430,6 +451,13 @@ def create_row_slot(app):
     # 최종단가 (오른쪽 정렬). 자릿수가 맞아 보이도록 고정폭 글꼴(num_family)을 쓴다.
     slot["price_label"] = label(COL_PRICE, theme.table_num_bold, anchor="e", fg=c["accent_2"])
 
+    # v0.1.8: 열 구분선(요청 '열 구분선 활성화/비활성화'). 헤더의 폭 조절 손잡이와 달리
+    # 끌 수는 없는 얇은 선이고, 표시 여부는 update_row_slot에서 app.display_prefs로 정한다.
+    # place()로 grid 위에 얹으므로 grid 열 개수(그러니까 폭 계산)에는 영향이 없다.
+    divider_bars = [tk.Frame(row, bg=c["row_bg"]) for _ in range(len(COLUMNS) - 1)]
+    slot["divider_bars"] = divider_bars
+    row.bind("<Configure>", lambda event, r=row, bars=divider_bars: _reposition_dividers(r, bars))
+
     _bind_row_behavior(app, slot)
     return slot
 
@@ -451,9 +479,14 @@ def update_row_slot(app, slot, item, row_index):
     _, _, final_price = calc_row(item, app.rates)
 
     bg = app.row_normal_bg(slot)
-    slot["frame"].configure(bg=bg)
-    for widget in slot["tinted"]:
-        widget.configure(bg=bg)
+    _paint(app, slot, bg)
+
+    # v0.1.8: 구분선을 켰을 때만 여기서 강조색을 입힌다. 껐을 때는 _paint가 배경이
+    # 바뀔 때마다 같이 막대를 배경색으로 칠해 숨기므로 여기서 더 할 일이 없다.
+    if app.display_prefs.get("dividers", True):
+        divider_color = app.theme.color("col_divider")
+        for bar in slot.get("divider_bars", []):
+            bar.configure(bg=divider_color)
 
     paint_checkbox(app, slot, no in app.selected_nos)
 
@@ -566,3 +599,8 @@ def _paint(app, slot, color):
     slot["frame"].configure(bg=color)
     for widget in slot["tinted"]:
         widget.configure(bg=color)
+    # v0.1.8: 구분선이 꺼져 있으면 hover/선택으로 배경이 바뀔 때마다 막대도 같이 숨긴다.
+    # 켜져 있을 때는 손대지 않는다 -- TSERP도 border-right 색은 hover와 무관하게 고정이다.
+    if not app.display_prefs.get("dividers", True):
+        for bar in slot.get("divider_bars", []):
+            bar.configure(bg=color)

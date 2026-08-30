@@ -1547,3 +1547,105 @@
   - `installer\Output\MachineEstimate_Setup_v0.1.7.exe`
   - 크기: `10,510,136 bytes`
   - SHA-256: `2E5842A952C1A68B52E9FDE8FD648B1D89A824079BE38409B348C6D6F5A5E63`
+
+## 2026-08-30 v0.1.8 TSERP 스타일 UI(다크/라이트, 열 구분선, 글자 배율) 완료
+
+### 승인 및 변경 파일
+
+- 사용자 승인에 따라 버전을 `v0.1.8`로 올렸다.
+- 요청 배경: TSERP(사내 다른 프로그램)에는 다크/라이트, 열 구분선 on/off 같은 화면 표시
+  설정이 있고 UI 스타일도 TSERP식으로 맞춰 달라는 요청이었다. `estimate_app/ui/table.py`가
+  이미 TSERP `py/web/style.css`의 현황판(#tbl)을 옮긴 것이었으므로(v0.0.8 이래) 이번에는
+  ① 색상 팔레트를 TSERP 실제 selector 값으로 다시 맞추고 ② 런타임 다크/라이트 전환을
+  배선하고 ③ 열 구분선·글자 배율을 새로 추가했다.
+- 승인된 선택지
+  - 헤더: 보라→파랑 그라데이션을 걷어내고 TSERP식 평면 배경 + 파란 강조색으로 교체.
+  - 행 색상: 토글 없이 회색/흰색 단순 교차 줄무늬로 고정(요청: "교차로 단순히 연한
+    회색 계통과 흰색계통으로 행 색을 구분하면 됨").
+  - 전환 방식: 버튼 클릭 즉시 반영.
+  - 설정 위치: 설정창에 '화면 표시' 탭 신설(TSERP 사용 설명서의 "화면 표시 설정"과
+    같은 자리, 알약형 토글 켬=초록 ●/끔=빨강 ○ 스타일을 그대로 옮겼다).
+  - 기본 모드: 라이트.
+  - v0.1.8 표시 토글 3종: 다크/라이트 모드, 표 글자 크기 배율(70~150%), 열 구분선 on/off.
+- 변경: `estimate_app/assets/theme.json`, `estimate_app/core/config.py`,
+  `estimate_app/core/display_prefs.py`(신설), `estimate_app/ui/theme.py`,
+  `estimate_app/ui/dashboard.py`, `estimate_app/ui/table.py`,
+  `estimate_app/ui/settings_dialog.py`, `estimate_app/__init__.py`, `installer/Setup.iss`.
+
+### TSERP 조사 요약 (구현 근거)
+
+- `py/web/style.css` + `app.js`를 분석해 다크/라이트 색상표, `UI_DISPLAY_PREFS`
+  (`dividers`/`rowColors`/`fontScale`) 구조, `ui_display_prefs.json`(PC 로컬 전용,
+  "서버·DB 무관" 주석) 저장 위치, 사용 설명서 모달 안의 알약형 토글 UI 패턴을 확인했다.
+- TSERP는 rgba() 반투명 값(hover/selected/구분선)을 CSS에서 그대로 쓰지만, Tk는 위젯
+  배경에 알파를 못 준다. 배경 위에 미리 합성한 불투명 hex로 환산해 옮겼다(예: 라이트
+  hover `rgba(28,102,194,.18)` on 흰 배경 -> `#D6E3F4`).
+
+### 수정 내용
+
+1. `estimate_app/assets/theme.json`, `estimate_app/core/config.py`
+   - `colors` 단일 팔레트를 `themes.light`/`themes.dark` 두 벌로 나눴다. 라이트는 TSERP
+     라이트 selector 값, 다크는 기존 `presets.dark`(TSERP Deep Charcoal, v0.0.7부터 참고용으로만
+     있던 것)를 승격해 실제로 켤 수 있게 했다.
+   - `grad_from/grad_to/grad_fallback/panel_fg/panel_muted_fg` 키를 삭제했다(그라데이션
+     헤더 폐지로 더는 안 쓴다).
+   - 새 토큰 `col_divider`(열 구분선 색, 라이트 `#d3d8de` / 다크 `#2e3a46`)를 추가했다.
+   - `load_theme(mode)`가 `mode`("light"/"dark")에 맞는 팔레트 한 벌만 읽도록 바꿨다
+     (기본값 `mode` 인자로 하위 호출부 없이도 동작).
+2. `estimate_app/core/display_prefs.py` (신설)
+   - `theme_mode`/`dividers`/`font_scale`을 `%LOCALAPPDATA%\MachineEstimate\display_prefs.json`
+     에 저장한다. `settings.json`(공정 단가 등, v0.1.4부터 공유 폴더 가능)과 반드시 분리했다
+     -- 화면 취향까지 공유 폴더에 담으면 한 사람이 다크로 바꾸는 순간 그 폴더를 쓰는
+     모든 PC가 같이 바뀐다(TSERP도 같은 이유로 `ui_display_prefs.json`을 서버·DB와
+     무관한 PC 로컬 파일로 둔다).
+3. `estimate_app/ui/theme.py`
+   - `Theme(mode, font_scale)`로 확장. 글꼴 튜플 생성을 `_build_fonts()`로 뽑아내
+     `reload(mode)`(팔레트만)와 `set_font_scale(font_scale)`(표 글꼴만)이 각각 다시 쓸 수
+     있게 했다. 글자 배율은 표(`table_head/cell/sub`, 배지)에만 걸고 버튼·안내문은
+     그대로 둔다(TSERP도 이 배율은 표·상세 패널 전용이다).
+   - `paint_gradient()`/`_hex_to_rgb()`를 삭제했다(그라데이션 폐지로 안 쓰는 코드).
+4. `estimate_app/ui/dashboard.py`
+   - 헤더를 평면 배경(`panel`)으로 바꾸고 제목/요약줄 글자색을 `panel_fg`→`text`/`muted`로
+     옮겼다. 헤더 오른쪽에 다크/라이트 토글 버튼(☀️ 라이트 모드 / 🌙 다크 모드)을 추가했다.
+   - 본문을 `self.main_container` 프레임 하나로 감쌌다. 다크/라이트 전환과 글자 배율
+     변경은 위젯에 이미 박힌 색·글꼴이라 다시 짓는 것 말고는 반영할 방법이 없는데,
+     `root`를 통째로 비우면 설정창·입력창 같은 Toplevel까지 같이 닫히므로(Toplevel도
+     root의 자식) 본문 컨테이너만 지웠다 새로 짓는다(`_rebuild_dashboard_ui`). 검색어·
+     선택 상태는 다시 지은 뒤 그대로 복원한다.
+   - `apply_theme_mode`/`apply_font_scale`/`apply_divider_pref` 세 메서드를 추가했다.
+     앞의 둘은 화면을 다시 짓고(입력창이 열려 있으면 먼저 닫아 달라고 막는다 -- 견적
+     불러오기와 같은 이유), 구분선은 슬롯 색만 바꾸면 되므로 `refresh_table(False)`만 부른다.
+   - 표 글자 배율 단축키(Ctrl+=/-, Ctrl+0 초기화)를 추가했다.
+5. `estimate_app/ui/table.py`
+   - 데이터 행에 열 구분선을 추가했다(요청 '열 구분선 활성화/비활성화', 마지막 열 제외).
+     헤더의 폭 조절 손잡이(`_reposition_resizers`)와 같은 방식으로 `grid_bbox`를 재서
+     `place()`로 1px 막대를 얹는다(`_reposition_dividers`). 꺼져 있을 때는 막대를 지우는
+     대신 행 배경색으로 칠해 숨긴다(`_paint`가 hover/선택 전환마다 같이 처리) -- 막대를
+     없애면 매번 개수를 다시 맞추고 위치도 다시 걸어야 한다. 헤더의 드래그 손잡이는
+     구분선 on/off와 무관하게 그대로 유지된다(열 폭 조절 기능이 죽지 않게).
+   - 열 폭 드래그(`_apply_column_widths`) 시 구분선 위치도 같이 재배치하도록 연결했다
+     (열 폭만 바뀌고 행 전체 폭은 그대로일 때는 행의 `<Configure>`가 안 오기 때문).
+6. `estimate_app/ui/settings_dialog.py`
+   - '화면 표시' 탭 신설(`_build_display_tab`). '데이터 위치' 탭과 같이 [저장] 버튼과
+     무관하게 누르는 즉시 적용된다. 다크 모드/표 구분선은 TSERP 사용 설명서와 같은
+     알약형 토글(켬=초록 ●/끔=빨강 ○)로, 표 글자 크기는 −/+ 스테퍼 + "100%로 초기화"로 뒀다.
+7. 버전
+   - `APP_VERSION = "0.1.8"`.
+   - Inno Setup `MyAppVersion = "0.1.8"`.
+
+### 검증
+
+- `python -m compileall -q estimate_app main.py` 통과.
+- 실제 화면 실행(스모크 테스트):
+  - `python main.py`로 띄운 라이트 모드 화면을 스크린샷으로 확인 -- 평면 헤더(그라데이션
+    없음), 다크/라이트 토글 버튼, 열 구분선, 회색/흰색 교차 줄무늬가 모두 의도대로
+    보였다.
+  - 창 포커스가 이 세션을 실행 중인 VS Code로 계속 되돌아가는 환경 제약 때문에 다크
+    모드·설정창을 마우스 클릭으로 조작하는 화면 캡처는 안전하게 재현하지 못했다(엉뚱한
+    창을 클릭할 위험이 있어 중단했다). 대신 같은 프로세스 안에서 `EstimateApp`을 직접
+    구동해 기능 경로를 전부 예외 없이 통과시켰다: 다크<->라이트 전환(배경색 `#11161c`
+    ↔ `#f1f2f4` 확인), 글자 배율 130%<->100%(`table_cell_px` 17->22->17 확인), 구분선
+    on/off, 설정창의 8개 탭 목록에 '화면 표시'가 포함되고 실제로 선택 가능함을 확인했다.
+  - 테스트가 만든 `%LOCALAPPDATA%\MachineEstimate\display_prefs.json`(신규 파일, 기본값과
+    동일한 내용)은 확인 후 삭제해 사용자 환경에 흔적을 남기지 않았다. 기존 `settings.json`/
+    `session_state.json`은 읽기만 했고 쓰지 않았다.

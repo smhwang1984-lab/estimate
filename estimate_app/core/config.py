@@ -8,39 +8,56 @@ import json
 
 from . import paths
 
-DEFAULT_COLORS = {
-    # v0.0.8: 밝은 그라데이션 테마로 전환. 모든 글자/배경 조합은 WCAG 상대휘도 공식으로
-    # 명도차를 직접 계산해 통과시킨 값이다(본문 4.5:1 / 큰 글자·배지 3:1 이상).
-    # panel은 헤더 바 색이 아니라 ttk 위젯 전체(TFrame/TLabel/TLabelframe 등)의 배경색이므로
-    # 반드시 밝은 값을 유지해야 한다 — 팝업창이 ttk 위젯 위주라 여기가 어긋나면 팝업 전체가
-    # 강조색으로 덮인다. 헤더 그라데이션은 grad_from/grad_to 두 키로 따로 그린다.
-    "bg": "#f5f6fa", "panel": "#ffffff", "panel_2": "#eef1fb", "card": "#ffffff",
-    "card_alt": "#f7f9ff", "line": "#e3e7f2", "text": "#1c2436", "muted": "#616b82",
-    "accent": "#6553f0", "accent_2": "#2f6fd0", "success_bg": "#e3f6ec",
-    "success_fg": "#0f7a44", "warn_bg": "#fff3e0", "warn_fg": "#9a5b00",
-    "danger_bg": "#fdeaec", "danger_fg": "#b3252f",
-    "new_bg": "#fff2d9", "new_fg": "#8a5800", "new_border": "#e8bd6a",
-    "status_border_ok": "#46c98b", "status_border_warn": "#eda23b",
-    "status_border_danger": "#e5606c",
-    # 헤더 바 그라데이션(보라->파랑) 및 그 위에 얹는 글자색.
-    "grad_from": "#6553f0", "grad_to": "#2a76c4", "grad_fallback": "#6553f0",
-    "panel_fg": "#ffffff", "panel_muted_fg": "#dde4ff",
-    # 체크박스 테두리 전용. line(#e3e7f2)은 밝은 배경끼리는 거의 안 보여서
-    # 흰 바탕에서도 또렷하도록 더 진한 색을 따로 둔다(대비 3.4:1).
-    "checkbox_border": "#8089b5",
-    # 현황판 표(TSERP #tbl) 전용 색.
-    # v0.0.8: 행 사이 구분선(위/아래 바)을 없앴다 — 선택된 행이 많으면 두꺼운 줄무늬처럼
-    # 보여 어색하다는 지적을 받았다. 선택 표시는 줄 대신 행 배경을 옅게 물들이는 방식으로 바꿨다.
-    "pane_head_bg": "#eef1fb", "pane_head_fg": "#616b82",
-    "th_bg": "#f0f3fc", "th_fg": "#2b3550", "th_underline": "#6553f0",
-    "row_bg": "#ffffff", "row_alt_bg": "#f9fbff", "row_hover": "#eef4ff",
-    "row_selected_bg": "#f0eefe",
-    # v0.1.3: 품번이 겹치는 행 표시. danger_bg(#fdeaec)를 그대로 쓰면 "불가" 배지와 같은
-    # 색이라 배지가 행 배경에 묻히므로, 한 단계 노란기를 섞은 별도 색을 둔다.
-    # 줄무늬(짝수/홀수)를 잃지 않도록 alt도 따로 둔다 — 두 값 모두 흰 글자가 아니라
-    # text(#1c2436) 기준 대비 4.5:1 이상이다.
-    "row_dup_bg": "#fdeee4", "row_dup_alt_bg": "#fbe6d8", "row_dup_fg": "#a4400f",
+def _colors(**kwargs):
+    return kwargs
+
+
+# v0.1.8: TSERP(py/web/style.css)의 다크/라이트 팔레트를 그대로 옮겨 두 벌로 나눴다.
+# 예전에는 이 자리에 밝은 팔레트 하나만 있었고, 다크는 실행 중에 못 켜는 참고용
+# presets.dark로만 존재했다. rgba() 반투명 값(hover/selected/구분선)은 Tk가 위젯
+# 배경에 알파를 못 받아서 배경 위에 미리 합성한 불투명 hex로 바꿔 옮겼다.
+DEFAULT_THEMES = {
+    "light": _colors(
+        bg="#f1f2f4", panel="#ffffff", panel_2="#eef1fb", card="#ffffff",
+        card_alt="#f7f9ff", line="#d7dbe1", text="#202733", muted="#6a7686",
+        accent="#1c66c2", accent_2="#2f6fd0", success_bg="#e3f6ec",
+        success_fg="#1f7a3d", warn_bg="#fff3e0", warn_fg="#8c471f",
+        danger_bg="#fdeaec", danger_fg="#b0203a",
+        new_bg="#fff2d9", new_fg="#8a5800", new_border="#e8bd6a",
+        status_border_ok="#46c98b", status_border_warn="#eda23b",
+        status_border_danger="#e5606c",
+        # 체크박스 테두리 전용. line은 밝은 배경끼리 거의 안 보여서 더 진한 색을 따로 둔다.
+        checkbox_border="#8089b5",
+        pane_head_bg="#eef1fb", pane_head_fg="#616b82",
+        th_bg="#eaedf1", th_fg="#24344d", th_underline="#4a90d9",
+        row_bg="#ffffff", row_alt_bg="#eef0f2", row_hover="#d6e3f4",
+        row_selected_bg="#dfeaf6",
+        # v0.1.3: 품번이 겹치는 행 표시. danger_bg를 그대로 쓰면 "불가" 배지와 같은 색이라
+        # 배지가 행 배경에 묻히므로, 한 단계 노란기를 섞은 별도 색을 둔다.
+        row_dup_bg="#fdeee4", row_dup_alt_bg="#fbe6d8", row_dup_fg="#a4400f",
+        # v0.1.8: 표 열 구분선(요청 '열 구분선 활성화/비활성화'). 데이터 행 셀 오른쪽에만 긋는다.
+        col_divider="#d3d8de",
+    ),
+    "dark": _colors(
+        bg="#11161c", panel="#171d25", panel_2="#234060", card="#171d25",
+        card_alt="#1d2530", line="#2a3340", text="#dde4ec", muted="#8b97a7",
+        accent="#4fb0ff", accent_2="#9cc8ff", success_bg="#2c5c44",
+        success_fg="#7ddc9e", warn_bg="#5a3a1a", warn_fg="#ffb648",
+        danger_bg="#40222a", danger_fg="#ff9aa2",
+        new_bg="#5a3a1a", new_fg="#ffb648", new_border="#8a5a2a",
+        status_border_ok="#3ecf8e", status_border_warn="#d88a4f",
+        status_border_danger="#e05561",
+        checkbox_border="#333f4e",
+        pane_head_bg="#1d2530", pane_head_fg="#8b97a7",
+        th_bg="#1a2535", th_fg="#c8d8ec", th_underline="#4fb0ff",
+        row_bg="#141b23", row_alt_bg="#171f28", row_hover="#1f364b",
+        row_selected_bg="#1d3346",
+        row_dup_bg="#3a2318", row_dup_alt_bg="#402719", row_dup_fg="#ffb787",
+        col_divider="#2e3a46",
+    ),
 }
+THEME_MODES = tuple(DEFAULT_THEMES.keys())
+DEFAULT_THEME_MODE = "light"
 
 DEFAULT_FONTS = {
     "family": "맑은 고딕",
@@ -119,10 +136,15 @@ def _merged(defaults, override):
     return merged
 
 
-def load_theme():
+def load_theme(mode=DEFAULT_THEME_MODE):
+    """mode("light"/"dark")에 맞는 팔레트 한 벌만 읽는다. 잘못된 값은 라이트로 접어 둔다."""
+    if mode not in THEME_MODES:
+        mode = DEFAULT_THEME_MODE
     payload = _read_json("theme.json")
+    themes_payload = payload.get("themes")
+    theme_override = themes_payload.get(mode) if isinstance(themes_payload, dict) else None
     return {
-        "colors": _merged(DEFAULT_COLORS, payload.get("colors")),
+        "colors": _merged(DEFAULT_THEMES[mode], theme_override),
         "fonts": _merged(DEFAULT_FONTS, payload.get("fonts")),
         "layout": _merged(DEFAULT_LAYOUT, payload.get("layout")),
     }

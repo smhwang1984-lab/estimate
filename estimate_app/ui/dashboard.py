@@ -7,7 +7,7 @@ from datetime import datetime
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from .. import APP_TITLE, APP_VERSION
-from ..core import datastore, excel_io, paths, session, settings as settings_store, updater
+from ..core import datastore, display_prefs as display_prefs_store, excel_io, paths, session, settings as settings_store, updater
 from ..core.model import (create_blank_item, filter_items, find_duplicate_part_nos, get_next_no,
                           has_item_data, normalize_part_no)
 from ..core.pricing import calc_total_amount
@@ -24,7 +24,10 @@ from .theme import Theme
 class EstimateApp:
     def __init__(self, root):
         self.root = root
-        self.theme = Theme()
+        # v0.1.8: 다크/라이트·표 구분선·글자 배율은 이 PC에만 저장하는 별도 파일이다
+        # (settings.json은 공유 폴더로 옮길 수 있어 화면 취향까지 같이 담으면 안 된다).
+        self.display_prefs = display_prefs_store.load()
+        self.theme = Theme(self.display_prefs["theme_mode"], self.display_prefs["font_scale"])
         self.root.title(f"{APP_TITLE} v{APP_VERSION}")
         self.root.geometry(self.theme.layout["window_size"])
         self.root.minsize(self.theme.layout["min_width"], self.theme.layout["min_height"])
@@ -95,6 +98,13 @@ class EstimateApp:
         # 산출기 같은 다른 Toplevel에 포커스가 있을 때(텍스트 편집 중일 수 있다)는
         # Ctrl+Z가 여기로 안 온다.
         self.root.bind("<Control-z>", lambda event: self.undo_delete())
+        # v0.1.8: 표 글자 크기 배율 단축키(요청). Ctrl+=/-는 Shift 여부와 무관하게 같은
+        # keysym("plus"/"minus")으로 들어오는 배열이 많아 두 조합을 함께 걸어 둔다.
+        for seq in ("<Control-plus>", "<Control-equal>", "<Control-KP_Add>"):
+            self.root.bind(seq, lambda event: self._nudge_font_scale(display_prefs_store.FONT_SCALE_STEP))
+        for seq in ("<Control-minus>", "<Control-KP_Subtract>"):
+            self.root.bind(seq, lambda event: self._nudge_font_scale(-display_prefs_store.FONT_SCALE_STEP))
+        self.root.bind("<Control-0>", lambda event: self.apply_font_scale(display_prefs_store.DEFAULT_FONT_SCALE))
         # 저장된 항목이 많으면 표를 다 그리는 데 몇 초가 걸린다. 그 동안 아무것도 안 뜬 것처럼
         # 보이지 않도록 창을 먼저 띄우고, 목록은 곧바로 이어서 채운다.
         self.summary_var.set("목록을 불러오는 중입니다...")
@@ -131,10 +141,16 @@ class EstimateApp:
     def build_dashboard(self):
         c = self.theme.colors
         self.root.configure(bg=c["bg"])
+        # v0.1.8: 다크/라이트 전환은 이 프레임 하나만 지우고 다시 짓는다(build_dashboard를
+        # 다시 부르는 것). 설정창·팝업 같은 별도 Toplevel은 root의 형제가 아니라 자식이라
+        # root를 통째로 비우면 열려 있던 창까지 같이 닫힌다 -- 그래서 본문을 이 컨테이너
+        # 안에만 넣어 두고, 전환은 컨테이너만 교체한다(apply_theme_mode 참고).
+        self.main_container = tk.Frame(self.root, bg=c["bg"])
+        self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        # 헤더 바. PIL 없이 Canvas.create_line만으로 grad_from -> grad_to 좌->우 그라데이션을
-        # 그린다(v0.0.8: 밝은 그라데이션 테마, 배포 용량 증가 0MB). 텍스트는 Canvas 항목이라
-        # textvariable을 못 쓰므로 summary_var에 trace를 걸어 itemconfigure로 밀어 넣는다.
+        # 헤더 바. TSERP처럼 그라데이션 없는 평면 배경 + 오른쪽 위 다크/라이트 버튼.
+        # 텍스트는 Canvas 항목이라 textvariable을 못 쓰므로 summary_var에 trace를 걸어
+        # itemconfigure로 밀어 넣는다.
         #
         # v0.0.9: 세 줄의 y 좌표를 112px 안에 손으로 박아 두었더니, 배율이 높은 화면
         # (150%/200%)에서 글꼴만 커지고 좌표는 그대로라 제목과 요약줄이 서로 겹쳤다.
@@ -148,26 +164,28 @@ class EstimateApp:
             cursor += height + gap
         header_height = cursor - gap + pad_y
 
-        self.header_canvas = tk.Canvas(self.root, height=header_height,
-                                       highlightthickness=0, bg=c["grad_fallback"])
+        self.header_canvas = tk.Canvas(self.main_container, height=header_height,
+                                       highlightthickness=0, bg=c["panel"])
         self.header_canvas.pack(fill=tk.X)
-        self._header_width = 0
 
         self.header_title_id = self.header_canvas.create_text(
-            18, centers[0], anchor="w", text=APP_TITLE, fill=c["panel_fg"],
+            18, centers[0], anchor="w", text=APP_TITLE, fill=c["text"],
             font=self.theme.header_title)
         self.summary_var = tk.StringVar()
         self.summary_var.trace_add("write", lambda *args: self._sync_header_summary())
         self.header_summary_id = self.header_canvas.create_text(
-            18, centers[1], anchor="w", text="", fill=c["panel_muted_fg"], font=self.theme.normal)
+            18, centers[1], anchor="w", text="", fill=c["muted"], font=self.theme.normal)
         self.header_canvas.create_text(
             18, centers[2], anchor="w",
             # v0.1.3: "삭제 취소" 버튼을 없앤 대신 되돌리기 방법을 여기에 적어 둔다(요청 1).
             text="행을 클릭하면 선택, 더블클릭하면 항목 입력창이 열립니다. Ctrl/Shift로 여러 건 선택, "
                  "방금 삭제한 항목은 Ctrl+Z로 되돌립니다.",
-            fill=c["panel_muted_fg"], font=self.theme.small)
+            fill=c["muted"], font=self.theme.small)
 
-        actions = tk.Frame(self.header_canvas, bg=c["panel_2"])
+        actions = tk.Frame(self.header_canvas, bg=c["panel"])
+        theme_label = "☀️ 라이트 모드" if self.theme.mode == "light" else "🌙 다크 모드"
+        ttk.Button(actions, text=theme_label, command=self.toggle_theme_mode).pack(
+            side=tk.LEFT, padx=(0, 10))
         ttk.Button(actions, text="신규품목", command=self.open_new_items).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="기계 시트 업로드", command=self.upload_excel_file).pack(side=tk.LEFT, padx=4)
         # v0.1.4: 견적 보관함. 파일을 다루는 동작이라 업로드 옆에 둔다(보조 기능 줄은
@@ -182,9 +200,9 @@ class EstimateApp:
 
         self.header_canvas.bind("<Configure>", self._on_header_configure)
 
-        tk.Frame(self.root, bg=c["line"], height=1).pack(fill=tk.X)
+        tk.Frame(self.main_container, bg=c["line"], height=1).pack(fill=tk.X)
 
-        search = tk.Frame(self.root, bg=c["bg"], padx=16, pady=12)
+        search = tk.Frame(self.main_container, bg=c["bg"], padx=16, pady=12)
         search.pack(fill=tk.X)
         tk.Label(search, text="Search", bg=c["bg"], fg=c["text"], font=self.theme.bold).pack(side=tk.LEFT, padx=(0, 8))
         self.search_var = tk.StringVar()
@@ -211,7 +229,7 @@ class EstimateApp:
 
         # 현황판 영역. 스크롤바를 먼저 오른쪽에 붙이고, 남은 폭 안에
         # [구역 제목 / 고정 헤더 / 스크롤되는 본문]을 쌓아야 헤더와 본문의 열이 어긋나지 않는다.
-        board = tk.Frame(self.root, bg=c["bg"])
+        board = tk.Frame(self.main_container, bg=c["bg"])
         board.pack(fill=tk.BOTH, expand=True)
         self.row_scrollbar = ttk.Scrollbar(board, orient=tk.VERTICAL)
         self.row_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -241,11 +259,6 @@ class EstimateApp:
         self.row_canvas.bind("<Leave>", lambda e: self.row_canvas.unbind_all("<MouseWheel>"))
 
     def _on_header_configure(self, event):
-        # 폭이 실제로 달라졌을 때만 그라데이션을 다시 그린다. 안 그러면 창을 끌 때마다
-        # 반복해서 다시 칠해 무거워진다(높이 변화는 헤더가 고정 높이라 발생하지 않는다).
-        if event.width != self._header_width:
-            self._header_width = event.width
-            self.theme.paint_gradient(self.header_canvas, event.width, event.height)
         self.header_canvas.coords(self.header_actions_id, event.width - 18, event.height // 2)
 
     def _sync_header_summary(self):
@@ -258,6 +271,78 @@ class EstimateApp:
 
     def _on_mousewheel(self, event):
         self.row_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    # ---------- 화면 표시(v0.1.8: 다크/라이트, 구분선, 글자 배율) ----------
+
+    def toggle_theme_mode(self):
+        other = "dark" if self.theme.mode == "light" else "light"
+        self.apply_theme_mode(other)
+
+    def _guard_open_popups(self):
+        """입력창이 열려 있으면 화면을 통째로 다시 짓지 않는다(견적 불러오기와 같은 이유:
+        popup.py의 save_and_close()가 붙잡아 둔 카드를 편집 중일 수 있다)."""
+        if self.open_popups:
+            messagebox.showwarning(
+                "전환할 수 없음",
+                f"항목 입력창 {len(self.open_popups)}개가 열려 있습니다.\n"
+                f"입력창을 모두 닫은 뒤 다시 시도해 주세요.")
+            return False
+        return True
+
+    def _rebuild_dashboard_ui(self):
+        """본문(main_container) 하나만 지웠다 새로 짓는다 -- root를 통째로 비우면 설정창·
+        입력창 같은 별도 Toplevel까지 같이 닫힌다(Toplevel도 root의 자식이라 winfo_children
+        대상에 걸린다). 다크/라이트 전환과 표 글자 배율 변경이 함께 쓴다 -- 둘 다 위젯에
+        이미 박힌 색·글꼴을 바꾸는 거라 다시 짓는 것 말고는 반영할 방법이 없다.
+        """
+        search_text = self.get_search_text()
+        selection = set(self.selected_nos)
+        self.main_container.destroy()
+        self.row_slots = []
+        self.no_to_slot = {}
+        self.header_frame = None
+        self.header_labels = {}
+        self.header_resize_handles = []
+        self.more_button_frame = None
+        self.more_button = None
+        self.empty_frame = None
+        self.table_header = None
+
+        self.theme.apply(self.root)
+        self.build_dashboard()
+        if search_text:
+            self.search_var.set(search_text)
+        self.selected_nos = selection
+        self.refresh_table(True)
+
+    def apply_theme_mode(self, mode):
+        """다크/라이트를 바꾸고 화면을 즉시 다시 그린다."""
+        if mode == self.theme.mode or not self._guard_open_popups() or not self.theme.reload(mode):
+            return
+        self.display_prefs["theme_mode"] = mode
+        display_prefs_store.save(self.display_prefs)
+        self._rebuild_dashboard_ui()
+
+    def apply_font_scale(self, font_scale):
+        """표 글자 크기 배율(70~150%)을 바꾸고 화면을 즉시 다시 그린다."""
+        font_scale = display_prefs_store.clamp_font_scale(font_scale)
+        if not self._guard_open_popups() or not self.theme.set_font_scale(font_scale):
+            return
+        self.display_prefs["font_scale"] = font_scale
+        display_prefs_store.save(self.display_prefs)
+        self._rebuild_dashboard_ui()
+
+    def _nudge_font_scale(self, delta):
+        self.apply_font_scale(self.theme.font_scale + delta)
+
+    def apply_divider_pref(self, enabled):
+        """열 구분선 on/off. 슬롯 색만 바꾸면 되므로 화면을 다시 짓지 않는다."""
+        enabled = bool(enabled)
+        if enabled == self.display_prefs.get("dividers", True):
+            return
+        self.display_prefs["dividers"] = enabled
+        display_prefs_store.save(self.display_prefs)
+        self.refresh_table(False)
 
     # ---------- 설정 ----------
 
