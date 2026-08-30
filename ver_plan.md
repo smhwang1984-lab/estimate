@@ -1649,3 +1649,12 @@
   - 테스트가 만든 `%LOCALAPPDATA%\MachineEstimate\display_prefs.json`(신규 파일, 기본값과
     동일한 내용)은 확인 후 삭제해 사용자 환경에 흔적을 남기지 않았다. 기존 `settings.json`/
     `session_state.json`은 읽기만 했고 쓰지 않았다.
+
+### Git 결과 및 최종 설치 파일
+
+- `Estimate` 브랜치에 `worktree-v0.1.8-tserp-ui`를 fast-forward 병합했다(커밋 `999ba6a`).
+- `git push origin Estimate`: 성공 (`2d8b390..999ba6a`).
+- `build.bat setup`으로 PyInstaller(onedir) + Inno Setup을 실행해 최종 설치 파일을 만들었다.
+  - `installer\Output\MachineEstimate_Setup_v0.1.8.exe`
+  - 크기: `10,516,201 bytes`
+  - SHA-256: `2958DFC2A30DF7227B560755EA6921032FB065A9EF2C8D3F262F16EC6AF0ED9E`
