@@ -1726,3 +1726,13 @@
   이번 테스트 코드는 그 파일을 쓰는 경로를 전혀 부르지 않았고 생성 시각도 v0.1.8 빌드
   이후 한참 지난 시점이라 사용자가 실제 설치본으로 다크 모드를 눌러 본 흔적으로 보고
   건드리지 않았다(지난번과 달리 삭제하지 않음).
+
+### Git 결과 및 최종 설치 파일
+
+- `Estimate` 브랜치에 `worktree-v0.1.9-download-name-upload-removal`을 fast-forward
+  병합했다(커밋 `c29e4f3`).
+- `git push origin Estimate`: 성공 (`4fceacf..c29e4f3`).
+- `build.bat setup`으로 PyInstaller(onedir) + Inno Setup을 실행해 최종 설치 파일을 만들었다.
+  - `installer\Output\MachineEstimate_Setup_v0.1.9.exe`
+  - 크기: `10,508,506 bytes`
+  - SHA-256: `DAA9F0AB7F4A28D6A08E7A94162761E612C044EEDB1843B83D395CB5510D1509`
