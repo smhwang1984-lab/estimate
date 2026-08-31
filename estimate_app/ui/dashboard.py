@@ -1,8 +1,11 @@
 """메인 화면(카드 목록)과 전체 흐름을 붙잡고 있는 클래스."""
 
 import os
+import queue
 import subprocess
+import threading
 import tkinter as tk
+from copy import deepcopy
 from datetime import datetime
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
@@ -52,9 +55,24 @@ class EstimateApp:
 
         self.data = []
         self.new_items = []
+        self.data_state = None
+        self.settings_loading = False
+        self.settings_load_queue = queue.Queue()
+        self.settings_load_error = None
+        self.export_in_progress = False
         # v0.0.9: 단가·Material 목록·회사 정보의 주인은 설정창이다(core/settings.py).
         # 세션에는 더 이상 단가를 담지 않는다 — 담아 두면 옛 세션이 새 설정을 덮어쓴다.
-        self.settings = settings_store.load()
+        location = datastore.load_location()
+        if location["enabled"]:
+            # 공유 폴더 판정은 느릴 수 있다. 화면은 기본값으로 먼저 만들고 실제 설정은
+            # 백그라운드에서 읽어, 끊긴 SMB 경로 때문에 첫 화면이 멈추지 않게 한다.
+            self.settings = settings_store.defaults()
+            self.data_state = {"dir": location["path"], "shared": True,
+                               "ok": False, "reason": datastore.REASON_UNREACHABLE}
+            self.settings_loading = True
+        else:
+            self.settings = settings_store.load()
+            self.data_state = datastore.get_state()
         self.rates = self.settings["rates"]
         # v0.1.0: 현황판 열 폭(요청 3-3). 사용자가 헤더 구분선을 끌어 고친 값만 여기 담기고,
         # 그 열은 col_width_overridden에 표시돼 창 크기가 바뀌어도 폭을 지킨다. 아직 아무도
@@ -125,10 +143,13 @@ class EstimateApp:
         # 저장된 항목이 많으면 표를 다 그리는 데 몇 초가 걸린다. 그 동안 아무것도 안 뜬 것처럼
         # 보이지 않도록 창을 먼저 띄우고, 목록은 곧바로 이어서 채운다.
         self.summary_var.set("목록을 불러오는 중입니다...")
+        if self.settings_loading:
+            self._start_settings_load()
+        else:
+            # v0.1.4: 공유 폴더 경고를 업데이트 확인보다 먼저 띄운다(설정이 기본값으로 보이는
+            # 이유를 먼저 알려야 사용자가 값을 다시 입력하는 헛수고를 안 한다).
+            self.root.after(400, self.check_data_location)
         self.root.after_idle(lambda: self.refresh_table(True))
-        # v0.1.4: 공유 폴더 경고를 업데이트 확인보다 먼저 띄운다(설정이 기본값으로 보이는
-        # 이유를 먼저 알려야 사용자가 값을 다시 입력하는 헛수고를 안 한다).
-        self.root.after(400, self.check_data_location)
         self.root.after(800, self.check_for_update)
 
     # ---------- 창 기본 동작 ----------
@@ -361,6 +382,9 @@ class EstimateApp:
     # ---------- 설정 ----------
 
     def open_settings(self):
+        if self.settings_loading:
+            messagebox.showinfo("설정 확인 중", "공유 설정을 불러오는 중입니다. 잠시 뒤 다시 열어 주세요.")
+            return
         open_settings_dialog(self)
 
     def open_condition_dialog(self):
@@ -415,16 +439,58 @@ class EstimateApp:
         self.refresh_table(True)
         return True
 
+    def _start_settings_load(self):
+        def worker():
+            try:
+                loaded = settings_store.load()
+                state = datastore.get_state()
+                error = settings_store.get_load_error()
+            except OSError:
+                loaded = settings_store.defaults()
+                state = dict(self.data_state or {"dir": "", "shared": True,
+                                                 "ok": False,
+                                                 "reason": datastore.REASON_UNREACHABLE})
+                error = datastore.REASON_UNREACHABLE
+            self.settings_load_queue.put((loaded, state, error))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(80, self._poll_settings_load)
+
+    def _poll_settings_load(self):
+        try:
+            loaded, state, error = self.settings_load_queue.get_nowait()
+        except queue.Empty:
+            if self.settings_loading:
+                self.root.after(80, self._poll_settings_load)
+            return
+        self._finish_settings_load(loaded, state, error)
+
+    def _finish_settings_load(self, loaded, state, error):
+        self.settings_loading = False
+        self.settings = loaded
+        self.rates = loaded["rates"]
+        self.data_state = state
+        self.settings_load_error = error
+        self.col_widths = dict(loaded.get("col_widths", {}))
+        self.col_width_overridden = set(self.col_widths.keys())
+        if self.header_frame is not None:
+            from .table import _apply_column_widths
+            self.update_header_labels()
+            _apply_column_widths(self)
+        self.refresh_table(False)
+        if error:
+            self.root.after(100, self.check_data_location)
+
     def check_data_location(self):
         """공유 폴더를 못 읽었으면 시작할 때 알린다(v0.1.4).
 
         이 경고가 없으면 사용자는 기본 단가가 뜬 화면을 보고 "설정이 초기화됐다"고 판단해
         값을 다시 입력하게 된다. 그 상태에서는 설정 저장이 막혀 있다는 것도 같이 알린다.
         """
-        error = settings_store.get_load_error()
+        error = settings_store.get_load_error() or self.settings_load_error
         if not error:
             return
-        state = datastore.get_state()
+        state = self.data_state or datastore.get_state()
         messagebox.showwarning(
             "설정을 읽지 못했습니다",
             f"{datastore.describe(state)}\n\n폴더: {state['dir']}\n\n"
@@ -458,6 +524,8 @@ class EstimateApp:
         self.refresh_table(False)
 
     def save_column_settings(self):
+        if self.settings_loading:
+            return
         from .table import _persist_column_widths
         _persist_column_widths(self)
 
@@ -511,6 +579,7 @@ class EstimateApp:
         self.search_after_id = self.root.after(250, lambda: self.refresh_table(True))
 
     def show_more_cards(self):
+        self.display_limit += self.display_page_size
         self.refresh_table(False)
 
     def _summary_text(self, all_items, visible_items, query):
@@ -529,8 +598,13 @@ class EstimateApp:
             session_note = "  |  새 세션 (저장된 데이터 없음)"
         # v0.1.4: 공유 폴더를 쓰는 중인지, 지금 화면이 보관함의 어느 견적인지 한눈에 보이게
         # 한다 -- 네트워크에서는 "내가 지금 무엇을 고치고 있는가"가 사고를 막는 정보다.
-        state = datastore.get_state()
-        if not state["shared"]:
+        state = self.data_state
+        if state is None:
+            state = datastore.get_state()
+            self.data_state = state
+        if getattr(self, "settings_loading", False):
+            location_note = "  |  공유 설정 확인 중"
+        elif not state["shared"]:
             location_note = ""
         elif state["ok"]:
             location_note = "  |  공유 폴더"
@@ -557,6 +631,9 @@ class EstimateApp:
         """
         self.search_after_id = None
 
+        if reset_limit:
+            self.display_limit = self.display_page_size
+
         query = self.get_search_text()
         all_items, visible_items = filter_items(self.data, query)
         self.selected_nos.intersection_update({item["no"] for item in all_items})
@@ -579,7 +656,7 @@ class EstimateApp:
             return
 
         self._hide_empty()
-        shown = visible_items
+        shown = visible_items[:self.display_limit]
         while len(self.row_slots) < len(shown):
             self.row_slots.append(create_row_slot(self))
 
@@ -594,7 +671,10 @@ class EstimateApp:
             self.no_to_slot[item["no"]] = slot
         for slot in self.row_slots[len(shown):]:
             hide_row_slot(slot)
-        self._hide_more_button()
+        if len(shown) < len(visible_items):
+            self._show_more_button(len(shown), len(visible_items))
+        else:
+            self._hide_more_button()
 
         if reset_limit:
             self.row_canvas.yview_moveto(0)
@@ -841,10 +921,56 @@ class EstimateApp:
 
     # ---------- 엑셀 ----------
 
+    def _export_parent(self, parent):
+        try:
+            return parent if parent is not None and parent.winfo_exists() else self.root
+        except tk.TclError:
+            return self.root
+
+    def _poll_export(self, export_queue, original_items, chosen_path, parent):
+        try:
+            status, value = export_queue.get_nowait()
+        except queue.Empty:
+            if self.export_in_progress:
+                self.root.after(80, lambda: self._poll_export(export_queue, original_items, chosen_path, parent))
+            return
+
+        parent = self._export_parent(parent)
+        self.export_in_progress = False
+        self.root.configure(cursor="")
+        if status == "ok":
+            saved_count = value
+            # v0.0.9: 날짜별 누적 저장을 없애면서 저장 완료 표시를 여기로 옮겼다.
+            # 안 그러면 NEW 배지를 지워 줄 곳이 없어 모든 카드에 영원히 붙어 있게 된다.
+            for item in original_items:
+                item["save_pending"] = False
+                item["is_new_registration"] = False
+            self.save_session()
+            self.refresh_table(False)
+            messagebox.showinfo("다운로드 완료",
+                                f"{saved_count}개 항목을 저장했습니다.\n\n{chosen_path}",
+                                parent=parent)
+            return
+
+        kind, message = value
+        if kind == "TemplateNotFound":
+            messagebox.showerror("파일 오류", f"'{message}' 파일이 존재하지 않습니다.", parent=parent)
+        elif kind == "SheetNotFound":
+            messagebox.showerror("시트 오류", f"'{message}' 시트를 찾을 수 없습니다.", parent=parent)
+        else:
+            messagebox.showerror("저장 오류", f"파일을 저장하지 못했습니다.\n{message}", parent=parent)
+        self.refresh_table(False)
+
     def export_items(self, items, default_name=None, parent=None):
         """고른 항목을 엑셀 견적 파일로 내려받는다(v0.0.9: PDF 출력은 없앴다, 요청 3-1)."""
         if not items:
             messagebox.showwarning("다운로드 대상 없음", "다운로드할 항목을 먼저 선택하거나 입력하세요.", parent=parent)
+            return False
+        if self.settings_loading:
+            messagebox.showinfo("설정 확인 중", "공유 설정을 불러오는 중입니다. 잠시 뒤 다시 내려받아 주세요.", parent=parent)
+            return False
+        if self.export_in_progress:
+            messagebox.showinfo("저장 중", "엑셀 파일을 저장하는 중입니다.", parent=parent)
             return False
         parent = parent or self.root
 
@@ -858,28 +984,31 @@ class EstimateApp:
         if not chosen_path:
             return False
 
-        try:
-            saved_count = excel_io.export_items(items, self.rates, chosen_path, self.settings)
-        except excel_io.TemplateNotFound as exc:
-            messagebox.showerror("파일 오류", f"'{exc}' 파일이 존재하지 않습니다.", parent=parent)
-            return False
-        except excel_io.SheetNotFound as exc:
-            messagebox.showerror("시트 오류", f"'{exc}' 시트를 찾을 수 없습니다.", parent=parent)
-            return False
-        except OSError as exc:
-            messagebox.showerror("저장 오류", f"파일을 저장하지 못했습니다.\n{exc}", parent=parent)
-            return False
+        original_items = list(items)
+        item_snapshot = deepcopy(original_items)
+        rates_snapshot = dict(self.rates)
+        settings_snapshot = deepcopy(self.settings)
+        export_queue = queue.Queue()
+        self.export_in_progress = True
+        self.root.configure(cursor="watch")
+        self.summary_var.set("엑셀 파일을 저장하는 중입니다...")
 
-        # v0.0.9: 날짜별 누적 저장을 없애면서 저장 완료 표시를 여기로 옮겼다.
-        # 안 그러면 NEW 배지를 지워 줄 곳이 없어 모든 카드에 영원히 붙어 있게 된다.
-        for item in items:
-            item["save_pending"] = False
-            item["is_new_registration"] = False
-        self.save_session()
-        self.refresh_table(False)
-        messagebox.showinfo("다운로드 완료",
-                            f"{saved_count}개 항목을 저장했습니다.\n\n{chosen_path}",
-                            parent=parent)
+        def worker():
+            try:
+                saved_count = excel_io.export_items(item_snapshot, rates_snapshot,
+                                                    chosen_path, settings_snapshot)
+                export_queue.put(("ok", saved_count))
+            except excel_io.TemplateNotFound as exc:
+                export_queue.put(("error", ("TemplateNotFound", str(exc))))
+            except excel_io.SheetNotFound as exc:
+                export_queue.put(("error", ("SheetNotFound", str(exc))))
+            except OSError as exc:
+                export_queue.put(("error", ("OSError", str(exc))))
+            except Exception as exc:
+                export_queue.put(("error", ("Exception", str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(80, lambda: self._poll_export(export_queue, original_items, chosen_path, parent))
         return True
 
     def export_selected_items(self):

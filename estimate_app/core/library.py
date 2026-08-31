@@ -32,6 +32,7 @@ FILE_EXT = ".json"
 # 윈도우 파일 이름에 못 쓰는 문자. 사용자가 품번을 그대로 이름에 넣는 일이 많아
 # (예: `A-100/B`) 조용히 실패하지 않도록 여기서 걸러 낸다.
 _BAD_CHARS = '\\/:*?"<>|'
+_ENTRY_CACHE = {}
 
 
 def sanitize_title(title):
@@ -85,10 +86,51 @@ def is_changed_by_other(library_current, path, existing_mtime):
     return known is not None and known != existing_mtime
 
 
+def _entry_stat(path):
+    try:
+        stat = os.stat(path)
+        return int(stat.st_mtime), int(stat.st_size)
+    except OSError:
+        return None, None
+
+
+def _cache_entry(path, mtime, size, entry):
+    _ENTRY_CACHE[path] = (mtime, size, dict(entry))
+
+
+def _entry_from_file(path, title, mtime, size):
+    payload, error = datastore.read_json(path)
+    if error or not isinstance(payload, dict):
+        entry = {"title": title, "path": path, "saved_at": "", "saved_by": "",
+                 "count": 0, "mtime": mtime, "broken": True}
+        _cache_entry(path, mtime, size, entry)
+        return entry
+    entry = {
+        "title": str(payload.get("title") or title),
+        "path": path,
+        "saved_at": str(payload.get("saved_at") or ""),
+        "saved_by": str(payload.get("saved_by") or ""),
+        "count": len(payload.get("items") or []),
+        "mtime": mtime,
+        "broken": False,
+    }
+    _cache_entry(path, mtime, size, entry)
+    return entry
+
+
+def _entry_metadata(path, title):
+    mtime, size = _entry_stat(path)
+    cached = _ENTRY_CACHE.get(path)
+    if cached and cached[0] == mtime and cached[1] == size:
+        return dict(cached[2])
+    return _entry_from_file(path, title, mtime, size)
+
+
 def list_entries():
     """(목록, 오류). 오류는 None / datastore의 reason 값.
 
     최근에 저장한 것이 위로 오게 정렬한다. 파일 하나가 깨져 있어도 나머지는 보여 준다.
+    파일별 mtime+size가 그대로면 이전에 읽은 메타데이터를 재사용한다.
     """
     state = datastore.get_state()
     if not state["ok"]:
@@ -99,33 +141,23 @@ def list_entries():
         # 아직 한 건도 저장하지 않은 정상 상태다(폴더는 처음 저장할 때 만든다).
         return [], None
 
-    entries = []
     try:
         names = os.listdir(directory)
     except OSError:
         return [], datastore.REASON_UNREACHABLE
 
+    entries = []
+    seen_paths = set()
     for name in names:
         if not name.lower().endswith(FILE_EXT):
             continue
         path = os.path.join(directory, name)
-        payload, error = datastore.read_json(path)
+        seen_paths.add(path)
         title = os.path.splitext(name)[0]
-        if error or not isinstance(payload, dict):
-            # 깨진 파일도 목록에는 남긴다 — 조용히 사라지면 사용자는 자기 견적이
-            # 없어진 줄 안다. 불러오기를 누를 때 다시 오류를 알린다.
-            entries.append({"title": title, "path": path, "saved_at": "", "saved_by": "",
-                            "count": 0, "mtime": get_mtime(path), "broken": True})
-            continue
-        entries.append({
-            "title": str(payload.get("title") or title),
-            "path": path,
-            "saved_at": str(payload.get("saved_at") or ""),
-            "saved_by": str(payload.get("saved_by") or ""),
-            "count": len(payload.get("items") or []),
-            "mtime": get_mtime(path),
-            "broken": False,
-        })
+        entries.append(_entry_metadata(path, title))
+    for cached_path in list(_ENTRY_CACHE):
+        if os.path.dirname(cached_path) == directory and cached_path not in seen_paths:
+            _ENTRY_CACHE.pop(cached_path, None)
     entries.sort(key=lambda entry: entry["mtime"] or 0, reverse=True)
     return entries, None
 
@@ -139,17 +171,23 @@ def save_entry(title, items):
     if not name:
         return None
     kept = [item for item in items if has_item_data(item)]
+    saved_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    saved_by = _who()
     payload = {
         "title": name,
-        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "saved_by": _who(),
+        "saved_at": saved_at,
+        "saved_by": saved_by,
         "app_version": APP_VERSION,
         "items": kept,
     }
     path = os.path.join(datastore.get_library_dir(), name + FILE_EXT)
     if not datastore.write_json_atomic(path, payload):
         return None
-    return {"path": path, "mtime": get_mtime(path), "count": len(kept)}
+    mtime, size = _entry_stat(path)
+    entry = {"title": name, "path": path, "saved_at": saved_at, "saved_by": saved_by,
+             "count": len(kept), "mtime": mtime, "broken": False}
+    _cache_entry(path, mtime, size, entry)
+    return {"path": path, "mtime": mtime, "count": len(kept)}
 
 
 def load_entry(path):
@@ -178,6 +216,7 @@ def load_entry(path):
 
 
 def delete_entry(path):
+    _ENTRY_CACHE.pop(path, None)
     try:
         os.remove(path)
         return True

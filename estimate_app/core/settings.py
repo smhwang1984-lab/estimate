@@ -360,29 +360,8 @@ def resolve_density(material_text, densities):
     return candidates[0]["density"]
 
 
-def load():
-    """저장된 설정을 읽어 온다. 파일이 없거나 깨졌으면 기본값 그대로 돌려준다.
-
-    v0.1.4: '파일이 없다'와 '경로에 못 닿는다'를 구분한다. 뒤쪽이면 `_load_error`를 세워
-    두고, 그 뒤로는 save()가 거부한다(위 파일 첫머리 설명 참고).
-    """
-    global _load_error
-    _load_error = None
-    payload = {}
-
-    state = datastore.get_state()
-    if not state["ok"]:
-        # 폴더 자체에 못 닿는다. 파일을 열어 보려 하면 SMB 대기 시간만 더 쓴다.
-        _load_error = state["reason"]
-    else:
-        loaded, error = datastore.read_json(get_settings_path())
-        if error in (datastore.REASON_UNREACHABLE, "broken"):
-            # 깨진 파일도 여기 넣는다 — 내용이 무엇이었는지 모르는 채 덮어쓰면
-            # 공유 폴더에서는 남의 설정을 통째로 날리는 것과 같다.
-            _load_error = error
-        elif isinstance(loaded, dict):
-            payload = loaded
-
+def _settings_from_payload(payload):
+    payload = payload if isinstance(payload, dict) else {}
     rates = _merged(DEFAULT_RATES, payload.get("rates"))
     for key, value in rates.items():
         # 단가를 문자열로 적어 두는 실수를 대비해 숫자로 바꿔 둔다.
@@ -410,6 +389,36 @@ def load():
             DEFAULT_MILL_MATERIALS, MILL_MATERIAL_NUMERIC_FIELDS),
         "headers": _merged(DEFAULT_HEADERS, payload.get("headers")),
     }
+
+def defaults():
+    """저장소를 건드리지 않고 코드 안의 기본 설정만 만든다."""
+    return _settings_from_payload({})
+
+def load():
+    """저장된 설정을 읽어 온다. 파일이 없거나 깨졌으면 기본값 그대로 돌려준다.
+
+    v0.1.4: '파일이 없다'와 '경로에 못 닿는다'를 구분한다. 뒤쪽이면 `_load_error`를 세워
+    두고, 그 뒤로는 save()가 거부한다(위 파일 첫머리 설명 참고).
+    """
+    global _load_error
+    _load_error = None
+    payload = {}
+
+    state = datastore.get_state()
+    if not state["ok"]:
+        # 폴더 자체에 못 닿는다. 파일을 열어 보려 하면 SMB 대기 시간만 더 쓴다.
+        _load_error = state["reason"]
+    else:
+        loaded, error = datastore.read_json(get_settings_path())
+        if error in (datastore.REASON_UNREACHABLE, "broken"):
+            # 깨진 파일도 여기 넣는다 — 내용이 무엇이었는지 모르는 채 덮어쓰면
+            # 공유 폴더에서는 남의 설정을 통째로 날리는 것과 같다.
+            _load_error = error
+        elif isinstance(loaded, dict):
+            payload = loaded
+
+    return _settings_from_payload(payload)
+
 
 
 def save(data, force=False):

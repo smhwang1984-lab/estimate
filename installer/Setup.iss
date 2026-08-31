@@ -1,4 +1,4 @@
-; 기계 시트 표준 견적 입력 시스템 설치 스크립트
+﻿; 기계 시트 표준 견적 입력 시스템 설치 스크립트
 ; Inno Setup Compiler(ISCC.exe)로 컴파일한다.
 ; AppId는 이후 버전에서도 동일 설치로 인식되도록 고정한다. 변경하지 말 것.
 ;
@@ -23,7 +23,7 @@
 
 #define MyAppName "Estimate(견적)"
 #define MyAppFolderName "Estimate"
-#define MyAppVersion "0.1.9"
+#define MyAppVersion "0.2.0"
 #define MyAppExeName "Estimate.exe"
 #define MyAppIconName "estimate.ico"
 #define MyOldAppExeName "Machine_Estimate.exe"

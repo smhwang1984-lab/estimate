@@ -8,6 +8,8 @@
 먼저 묻는다 — 삭제와 달리 Ctrl+Z로 되돌릴 수 없기 때문이다.
 """
 
+import queue
+import threading
 import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, ttk
@@ -74,6 +76,8 @@ def open_library_dialog(app, mode="load"):
 
     name_var = tk.StringVar()
     entries = []
+    scan_queue = queue.Queue()
+    refresh_token = {"value": 0}
 
     def selected_entry():
         # 목록이 비었거나 못 읽었을 때는 안내 문구 한 줄을 대신 넣어 둔다. 그 줄도 클릭이
@@ -84,12 +88,10 @@ def open_library_dialog(app, mode="load"):
             return None
         return entries[indexes[0]]
 
-    def refresh_list(select_title=None):
+    def _apply_entry_list(found, error, state, directory, select_title):
         entries.clear()
         entry_list.delete(0, tk.END)
-        state = datastore.get_state()
-        location_var.set(f"보관 위치: {datastore.get_library_dir()}\n상태: {datastore.describe(state)}")
-        found, error = library.list_entries()
+        location_var.set(f"보관 위치: {directory}\n상태: {datastore.describe(state)}")
         if error:
             entry_list.insert(tk.END, "  보관함을 읽을 수 없습니다 — 데이터 위치 설정을 확인하세요.")
             return
@@ -106,6 +108,41 @@ def open_library_dialog(app, mode="load"):
                     entry_list.selection_set(index)
                     entry_list.see(index)
                     break
+
+    def _poll_refresh(token):
+        try:
+            result = scan_queue.get_nowait()
+        except queue.Empty:
+            if refresh_token["value"] == token and dialog.winfo_exists():
+                dialog.after(80, lambda: _poll_refresh(token))
+            return
+        if result[0] != refresh_token["value"] or not dialog.winfo_exists():
+            return
+        _token, found, error, state, directory, select_title = result
+        _apply_entry_list(found, error, state, directory, select_title)
+
+    def refresh_list(select_title=None):
+        refresh_token["value"] += 1
+        token = refresh_token["value"]
+        entries.clear()
+        entry_list.delete(0, tk.END)
+        entry_list.insert(tk.END, "  보관함을 불러오는 중입니다...")
+        location_var.set("보관 위치를 확인하는 중입니다...")
+
+        def worker():
+            try:
+                state = datastore.get_state()
+                directory = datastore.get_library_dir()
+                found, error = library.list_entries()
+            except OSError:
+                state = {"dir": "", "shared": True, "ok": False,
+                         "reason": datastore.REASON_UNREACHABLE}
+                directory = ""
+                found, error = [], datastore.REASON_UNREACHABLE
+            scan_queue.put((token, found, error, state, directory, select_title))
+
+        threading.Thread(target=worker, daemon=True).start()
+        dialog.after(80, lambda: _poll_refresh(token))
 
     def on_select(_event=None):
         entry = selected_entry()

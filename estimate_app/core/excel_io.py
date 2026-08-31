@@ -20,10 +20,6 @@ import os
 from copy import copy
 from datetime import datetime
 
-from openpyxl.styles import Alignment
-from openpyxl.formula.translate import Translator
-from openpyxl.utils import get_column_letter, range_boundaries
-
 from . import paths, settings as settings_store
 from .config import MACHINE_KEYS
 from .model import material_text
@@ -87,6 +83,41 @@ MACHINE_KEYWORDS = [
     ("m_grind", ("연삭", "연마", "와이어", "EDM")),
 ]
 
+_XL_HELPERS = {}
+
+
+def _load_openpyxl_helpers():
+    if _XL_HELPERS:
+        return
+    from openpyxl.formula.translate import Translator as _Translator
+    from openpyxl.styles import Alignment as _Alignment
+    from openpyxl.utils import get_column_letter as _get_column_letter, range_boundaries as _range_boundaries
+    _XL_HELPERS.update({
+        "Alignment": _Alignment,
+        "Translator": _Translator,
+        "get_column_letter": _get_column_letter,
+        "range_boundaries": _range_boundaries,
+    })
+
+
+def Alignment(*args, **kwargs):
+    _load_openpyxl_helpers()
+    return _XL_HELPERS["Alignment"](*args, **kwargs)
+
+
+def Translator(*args, **kwargs):
+    _load_openpyxl_helpers()
+    return _XL_HELPERS["Translator"](*args, **kwargs)
+
+
+def get_column_letter(*args, **kwargs):
+    _load_openpyxl_helpers()
+    return _XL_HELPERS["get_column_letter"](*args, **kwargs)
+
+
+def range_boundaries(*args, **kwargs):
+    _load_openpyxl_helpers()
+    return _XL_HELPERS["range_boundaries"](*args, **kwargs)
 
 def _openpyxl():
     """openpyxl은 불러오는 데만 3초 가까이 걸린다.
@@ -95,6 +126,7 @@ def _openpyxl():
     시작 시간을 줄인다(요청: "프로그램이 무거워").
     """
     import openpyxl
+    _load_openpyxl_helpers()
     return openpyxl
 
 
