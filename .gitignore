@@ -1,5 +1,6 @@
 # --- 빌드 산출물 (용량이 크고 언제든 재생성 가능) ---
 build/
+build_v016/
 dist/
 exe_release/*.exe
 installer/Output/*.exe
