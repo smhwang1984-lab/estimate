@@ -154,7 +154,37 @@ class EstimateApp:
 
     # ---------- 창 기본 동작 ----------
 
+    def _autosave_current_library(self):
+        """마지막 보관함 파일만 종료 직전에 원자적으로 덮어쓴다."""
+        current = self.library_current
+        if not current:
+            return True
+        title = str(current.get("title") or "").strip()
+        path = str(current.get("path") or "").strip()
+        if not title or not path:
+            messagebox.showerror("자동 저장 오류", "마지막 견적의 저장 위치를 확인할 수 없어 종료를 취소했습니다.",
+                                 parent=self.root)
+            return False
+        existing_mtime = library.get_mtime(path)
+        if library.is_changed_by_other(current, path, existing_mtime):
+            stamp = datetime.fromtimestamp(existing_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            messagebox.showwarning(
+                "자동 저장 중단",
+                f"'{title}'이 다른 곳에서 저장됐습니다 ({stamp}).\n\n"
+                "내용을 확인한 뒤 보관함에서 직접 저장해 주세요. 종료를 취소했습니다.",
+                parent=self.root)
+            return False
+        result = library.save_entry(title, self.data, path=path)
+        if result is None:
+            messagebox.showerror("자동 저장 오류", f"견적을 저장하지 못해 종료를 취소했습니다.\n\n{path}",
+                                 parent=self.root)
+            return False
+        self.library_current = {"title": title, "path": result["path"], "mtime": result["mtime"]}
+        return True
+
     def on_close(self):
+        if not self._autosave_current_library():
+            return
         self.save_column_settings()
         self.save_session()
         self.root.destroy()
@@ -222,12 +252,12 @@ class EstimateApp:
 
         actions = tk.Frame(self.header_canvas, bg=c["panel"])
         theme_label = "☀️ 라이트 모드" if self.theme.mode == "light" else "🌙 다크 모드"
-        ttk.Button(actions, text=theme_label, command=self.toggle_theme_mode).pack(
+        ttk.Button(actions, text=theme_label, command=self.toggle_theme_mode, style="Subtle.TButton").pack(
             side=tk.LEFT, padx=(0, 10))
         ttk.Button(actions, text="신규품목", command=self.open_new_items).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="견적 불러오기",
                    command=lambda: self.open_library("load")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(actions, text="견적 저장",
+        ttk.Button(actions, text="견적 저장", style="Primary.TButton",
                    command=lambda: self.open_library("save")).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="설정", command=self.open_settings).pack(side=tk.LEFT, padx=4)
         self.header_actions_id = self.header_canvas.create_window(
@@ -253,13 +283,13 @@ class EstimateApp:
                  font=self.theme.small).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(extra_actions, text="전체 선택", command=self.select_visible_items).pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="선택 해제", command=self.clear_selection).pack(side=tk.LEFT, padx=4)
-        ttk.Button(extra_actions, text="선택 다운로드", command=self.export_selected_items).pack(side=tk.LEFT, padx=4)
+        ttk.Button(extra_actions, text="선택 다운로드", command=self.export_selected_items, style="Primary.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(extra_actions, text="가공조건 산출기", command=self.open_condition_dialog).pack(side=tk.LEFT, padx=4)
         # v0.1.2: 되돌릴 수 없는 동작이라 "선택 다운로드"와 바로 붙여 두지 않는다(오클릭 방지) --
         # 앞쪽 버튼들과 간격을 더 벌린다.
         # v0.1.3: "삭제 취소" 버튼은 없앴다(요청 1) -- 되돌리기 기능 자체는 남아 있다.
         # Ctrl+Z와 삭제 확인창 안내 문구가 그 자리를 대신한다.
-        ttk.Button(extra_actions, text="선택 삭제", command=self.delete_selected_items).pack(
+        ttk.Button(extra_actions, text="선택 삭제", command=self.delete_selected_items, style="Danger.TButton").pack(
             side=tk.LEFT, padx=(16, 4))
 
         # 현황판 영역. 스크롤바를 먼저 오른쪽에 붙이고, 남은 폭 안에

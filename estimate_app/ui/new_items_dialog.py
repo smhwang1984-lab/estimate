@@ -52,8 +52,8 @@ class NewItemsDialog:
         buttons.pack(fill=tk.X, pady=(14, 0))
         ttk.Button(buttons, text="신규 추가", command=self.add_item).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(buttons, text="선택 수정", command=self.edit_selected).pack(side=tk.LEFT, padx=6)
-        ttk.Button(buttons, text="선택 삭제", command=self.delete_selected).pack(side=tk.LEFT, padx=6)
-        ttk.Button(buttons, text="신규품목 출력", command=self.export_all).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(buttons, text="선택 삭제", command=self.delete_selected, style="Danger.TButton").pack(side=tk.LEFT, padx=6)
+        ttk.Button(buttons, text="신규품목 출력", command=self.export_all, style="Primary.TButton").pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(buttons, text="본래 창으로 이관", command=self.transfer_all).pack(side=tk.RIGHT, padx=6)
         ttk.Button(buttons, text="닫기", command=self.close).pack(side=tk.RIGHT, padx=6)
         self.refresh()
@@ -121,8 +121,7 @@ class NewItemsDialog:
 
     def export_all(self):
         items = [item for item in sort_new_items(self.app.new_items) if has_item_data(item)]
-        if self.app.export_items(
-                items, default_name=f"신규품목_{datetime.now():%Y-%m-%d}.xlsx", parent=self.window):
+        if self.app.export_items(items, parent=self.window):
             self.refresh()
 
     def transfer_all(self):
