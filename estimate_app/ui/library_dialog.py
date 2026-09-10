@@ -257,13 +257,13 @@ def open_library_dialog(app, mode="load"):
     ttk.Button(action_row, text="불러오기", command=do_load).pack(side=tk.LEFT)
     ttk.Button(action_row, text="새로고침", command=lambda: refresh_list()).pack(side=tk.LEFT, padx=8)
     # 삭제는 공유 폴더의 파일을 지우는 동작이라 되돌릴 수 없다 -- 오클릭을 막으려고 떼어 둔다.
-    ttk.Button(action_row, text="삭제", command=do_delete).pack(side=tk.LEFT, padx=(24, 0))
+    ttk.Button(action_row, text="삭제", command=do_delete, style="Danger.TButton").pack(side=tk.LEFT, padx=(24, 0))
     ttk.Button(action_row, text="닫기", command=dialog.destroy).pack(side=tk.RIGHT)
 
     save_row = ttk.Frame(bottom)
     save_row.pack(fill=tk.X, pady=(10, 0))
     ttk.Label(save_row, text="이름").pack(side=tk.LEFT, padx=(0, 8))
-    ttk.Button(save_row, text="현재 카드 목록 저장",
+    ttk.Button(save_row, text="현재 카드 목록 저장", style="Primary.TButton",
                command=do_save).pack(side=tk.RIGHT, padx=(8, 0))
     name_entry = ttk.Entry(save_row, textvariable=name_var)
     name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)

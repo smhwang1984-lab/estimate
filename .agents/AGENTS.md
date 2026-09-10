@@ -16,3 +16,10 @@
 - 수정 완료 후에는 변경 내용, 검증 결과, 배포 파일 위치를 간결하게 보고한다.
 - 불확실한 요구사항은 구현 전에 질문한다.
 
+
+## Windows 11 Home 실행 제약
+
+- 이 작업 환경은 Windows 11 Home이므로 Codex Windows sandbox helper를 사용할 수 없다.
+- sandbox helper 오류가 이 플랫폼 제약으로 발생하면, 사용자 승인 범위 안에서만 좁게 한정한
+  `require_escalated` PowerShell 명령을 사용한다. 이를 우회하려고 Windows 설정·보안 정책·
+  시스템 파일을 변경하지 않는다.

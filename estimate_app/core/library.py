@@ -162,7 +162,7 @@ def list_entries():
     return entries, None
 
 
-def save_entry(title, items):
+def save_entry(title, items, path=None):
     """견적 한 건을 저장한다. 성공하면 {"path", "mtime", "count"}, 실패하면 None.
 
     덮어쓰기 여부·충돌 확인은 부르는 쪽(화면)이 먼저 끝낸 다음 이 함수를 부른다.
@@ -180,7 +180,7 @@ def save_entry(title, items):
         "app_version": APP_VERSION,
         "items": kept,
     }
-    path = os.path.join(datastore.get_library_dir(), name + FILE_EXT)
+    path = path or os.path.join(datastore.get_library_dir(), name + FILE_EXT)
     if not datastore.write_json_atomic(path, payload):
         return None
     mtime, size = _entry_stat(path)

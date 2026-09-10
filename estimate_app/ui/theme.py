@@ -103,11 +103,21 @@ class Theme:
         c = self.colors
         style.configure("TFrame", background=c["panel"])
         style.configure("TLabel", background=c["panel"], foreground=c["text"])
-        style.configure("TButton", padding=(10, 6), background=c["panel_2"], foreground=c["text"],
+        style.configure("TButton", padding=(12, 7), background=c["panel"], foreground=c["text"],
                         bordercolor=c["line"], focuscolor=c["accent"])
-        style.map("TButton",
-                  background=[("active", c["accent"]), ("pressed", c["accent"])],
-                  foreground=[("active", c["bg"]), ("pressed", c["bg"])])
+        style.map("TButton", background=[("active", c["panel_2"]), ("pressed", c["panel_2"])])
+        style.configure("Primary.TButton", padding=(12, 7), background=c["accent"], foreground=c["panel"],
+                        bordercolor=c["accent"], focuscolor=c["accent"])
+        style.map("Primary.TButton", background=[("active", c["accent_2"]), ("pressed", c["accent_2"])],
+                  foreground=[("active", c["panel"]), ("pressed", c["panel"])])
+        style.configure("Subtle.TButton", padding=(10, 7), background=c["panel"], foreground=c["muted"],
+                        bordercolor=c["panel"], focuscolor=c["accent"])
+        style.map("Subtle.TButton", background=[("active", c["panel_2"]), ("pressed", c["panel_2"])],
+                  foreground=[("active", c["text"]), ("pressed", c["text"])])
+        style.configure("Danger.TButton", padding=(12, 7), background=c["danger_bg"], foreground=c["danger_fg"],
+                        bordercolor=c["danger_bg"], focuscolor=c["danger_fg"])
+        style.map("Danger.TButton", background=[("active", c["danger_fg"]), ("pressed", c["danger_fg"])],
+                  foreground=[("active", c["panel"]), ("pressed", c["panel"])])
         style.configure("TEntry", padding=5, fieldbackground=c["card_alt"], foreground=c["text"],
                         insertcolor=c["text"], bordercolor=c["line"])
         style.configure("TCombobox", padding=5, fieldbackground=c["card_alt"], background=c["card_alt"],
@@ -129,6 +139,13 @@ class Theme:
         style.map("TNotebook.Tab",
                   background=[("selected", c["panel"])],
                   foreground=[("selected", c["accent_2"])])
+        style.configure("Treeview", background=c["card_alt"], fieldbackground=c["card_alt"],
+                        foreground=c["text"], bordercolor=c["line"], rowheight=30)
+        style.map("Treeview", background=[("selected", c["accent"])],
+                  foreground=[("selected", c["panel"])])
+        style.configure("Treeview.Heading", background=c["panel_2"], foreground=c["text"],
+                        bordercolor=c["line"], padding=(10, 7), font=self.bold)
+        style.map("Treeview.Heading", background=[("active", c["panel_2"])])
         style.configure("TLabelframe", background=c["panel"], foreground=c["text"], bordercolor=c["line"])
         style.configure("TLabelframe.Label", background=c["panel"], foreground=c["accent_2"], font=self.bold)
         style.configure("Value.TLabel", background=c["panel"], foreground=c["accent_2"], font=self.value_num)
