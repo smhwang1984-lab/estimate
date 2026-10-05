@@ -2933,3 +2933,17 @@ GUI라 자동 테스트가 없으므로 v0.1.1에서 쓴 방식(실제 Tk 창을
 2. `Estimate` 브랜치를 `origin`에 push한다.
 3. `main`으로 전환해 `Estimate`를 병합하고 충돌이 없음을 확인한다.
 4. 병합된 `main`을 `origin`에 push하고 커밋·원격 상태를 검증한다.
+
+### 반영 내용
+
+- `Estimate`에서 `f85e195 feat: Fluent 2 UI and v1.2.0 autosave`를 만들고 `origin/Estimate`에 push했다.
+- `main`에서 충돌 없이 `1075b4a merge: Estimate v1.2.0 into main` 병합 커밋을 만들고 `origin/main`에 push했다.
+
+### 검증 결과
+
+- 원격 `Estimate`는 `f85e19564a350a2fde6138284816d7e6b80863d2`, 원격 `main`은 `1075b4a47a3b1a8ee3dd4452996cce3bc7978abd`를 가리킨다.
+- 병합 직후 `git diff --check`와 작업트리 상태를 확인했고 충돌·미반영 파일이 없었다.
+
+### 미실행 항목
+
+- 없음.
