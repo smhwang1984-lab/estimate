@@ -180,6 +180,20 @@ def get_state(recheck=False):
     return dict(_state)
 
 
+def set_server_reachable(ok, reason=REASON_OK):
+    """실시간 동기화(ui/sync.py)가 서버 연결이 끊기거나 되살아난 것을 알았을 때 상태를 고친다.
+
+    get_state(recheck=True)는 서버에 다시 묻느라 화면을 멈출 수 있어서, 이미 결과를 아는
+    쪽이 캐시만 바꾼다. 서버 모드가 아니면 아무것도 하지 않는다.
+    """
+    global _state
+    state = get_state()
+    if not state.get("server"):
+        return
+    state.update({"ok": bool(ok), "reason": REASON_OK if ok else (reason or REASON_UNREACHABLE)})
+    _state = state
+
+
 def get_data_dir():
     """settings.json과 견적 보관함이 놓이는 폴더."""
     return get_state()["dir"]

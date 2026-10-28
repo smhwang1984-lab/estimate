@@ -1,54 +1,40 @@
-"""TSERP 현황판(py/web/style.css의 #tbl)과 같은 모양의 목록 표.
+"""견적 현황 표 — 엑셀처럼 한 줄 행으로 그리는 격자 표 (v1.5.0 전면 교체).
 
-웹 쪽 규칙을 Tkinter로 옮긴 것이라 대응 관계를 적어 둔다.
+v1.4.0까지는 행마다 칸 위젯(라벨·체크박스·구분선 15개 안팎)을 만들어 grid로 배치했다. 40건이면
+위젯이 600개를 넘어, 검색·선택·알림 줄 표시마다 Tk가 전부 다시 배치해 0.6~0.9초씩 걸렸다(실측).
+v1.5.0은 Canvas 하나에 **화면에 보이는 행만** 그린다. 건수가 수천이어도 그리는 양은 한 화면
+분량(약 40행)이라 스크롤·선택·검색이 즉시 반응한다. 윈도우 기본 Treeview 대신 직접 그리는
+이유는, Treeview로는 칸 하나만 색칠할 수 없고(가능여부 배지) 열 구분선·NEW 표시를 그릴 수 없어
+기존 기능(구분선 켜기/끄기, 가능여부 색, NEW 배지, 열 폭 끌기)을 그대로 지킬 수 없기 때문이다.
 
-    th                     고정 헤더. 배경 th_bg, 하단 2px th_underline, 고정폭 글꼴 18px bold
-    td                     셀. 17px
-    tr.datarow:hover       행 전체 배경이 row_hover 로 바뀐다
-    tr.datarow.selected    행 전체 배경이 row_selected_bg 로 바뀐다 (v0.0.8: 위/아래 구분선 대신
-                           배경을 옅게 물들이는 방식으로 바꿨다 — 선택 행이 많으면 줄이 두꺼운
-                           블록처럼 보여 어색하다는 지적을 반영했다)
-    .newbadge              저장 전 항목 표시
-    .badge                 가능여부 표시
+바뀌지 않는 규칙(옛 구현의 요청 번호는 dashboard/HANDOVER에 있다)
+    선택      클릭=그 행만, Ctrl+클릭=하나씩 더하고 빼기, Shift+클릭=기준 행부터 범위. 체크 칸은
+              언제나 그 행 하나만 켜고 끈다. 더블클릭=입력창, 우클릭=메뉴. 선택의 주인은
+              app.selected_nos / app.handle_row_click이고 이 표는 그리기와 입력 전달만 한다.
+    색 우선순위  hover > 선택 > 품번 중복 > 줄무늬. 중복 행은 품번 글자색도 바꾼다.
+    열 폭     끌면 왼쪽 열이 늘고 오른쪽 열이 같은 만큼 줄어든다. 끌기 시작 때 화면에 보이는
+              폭을 전부 고정 폭으로 삼고, 손을 떼면 settings.json에 남긴다. 끌지 않은 상태에서는
+              품명:Comment가 남는 폭을 3:2로 나눠 갖는다(COLUMNS의 weight).
+    구분선    app.display_prefs["dividers"]가 켜져 있을 때만 격자선을 긋는다.
 
-열 너비는 theme.json의 layout에서 바꾼다.
-
-v0.0.8: 검색·체크·더보기마다 표 전체를 destroy 후 재생성하던 방식(깜빡임의 원인, 33행
-기준 약 3.9초)을 버리고, 행 위젯을 "슬롯" 풀로 재사용한다. 슬롯은 create_row_slot()이
-한 번만 만들고, 목록이 바뀔 때마다 update_row_slot()이 텍스트·색만 새로 채운다.
-클릭·hover 바인딩도 슬롯 생성 시 한 번만 걸어 둔다 — 콜백이 슬롯 딕셔너리(slot["no"])를
-그때그때 읽으므로, 슬롯이 다른 항목을 표시하게 재사용돼도 다시 바인딩할 필요가 없다.
-
-v0.0.9: 맨 앞에 화면 순번 No 열을, 품명과 소재 사이에 Comment 열을 넣었다(요청 1-3, 1-4).
-선택 방식은 윈도우 탐색기와 같게 바꿨다(요청 2-1, 2-2) — 한 번 클릭은 그 행만 선택,
-Ctrl+클릭은 하나씩 더하고 빼기, Shift+클릭은 기준 행부터 범위 선택, 카드를 여는 것은
-더블클릭이다.
-
-v0.1.0: 헤더 열 사이에 연한 세로 구분선을 두고, 끌면 좌우 열 폭이 바뀐다(요청 3-2, 3-3).
-데이터 행에는 선을 넣지 않는다(요청 3-1) — 구분선은 헤더에만 있다. 폭은 app.col_widths에
-살아 있고 끄는 즉시 헤더와 모든 행 슬롯에 같이 반영되며, 손을 떼면 settings.json에 남는다
-(다음에 켤 때도 그대로 열린다). 한 번이라도 사용자가 끈 열은 창 크기가 바뀌어도 그 폭을
-지키도록 weight를 0으로 고정한다 — 그 전까지는 품명·Comment가 남는 폭을 나눠 갖는다.
-
-v0.1.3: 품번이 겹치는 행은 배경을 주황 계열(row_dup_bg/row_dup_alt_bg)로 물들이고 품번
-글자색도 함께 바꾼다(요청 3). 배경 우선순위는 선택 > 중복 > 줄무늬이며, 판정 자체는
-dashboard가 목록 전체를 보고 미리 만들어 둔 집합(app.duplicate_part_nos)이 쥐고 있다.
-마우스를 올린 동안(row_hover)에는 선택 행과 마찬가지로 잠깐 hover 색이 덮는다.
+좌표 규칙: 가로 스크롤은 Canvas 기능을 쓰지 않고 self.xoff를 직접 빼서 그린다(머리글과 본문이
+같은 값을 쓰므로 어긋날 일이 없다). 세로도 self.top(픽셀)을 직접 쓴다.
 """
 
 import tkinter as tk
+from tkinter import font as tkfont, ttk
 
 from ..core import settings as settings_store
 from ..core.model import hrc_text
 from ..core.pricing import calc_row
-from .widgets import make_checkbox
 
 MIN_COL_WIDTH = 40
-RESIZE_HANDLE_WIDTH = 7
+GRAB = 4                 # 열 경계에서 이 픽셀 안이면 폭 조절 손잡이로 본다
+SCROLL_ROWS = 3          # 휠 한 칸에 움직이는 행 수
+ANIM_MS = 12             # 휠 스크롤 보간 간격
+ANIM_EASE = 0.38         # 한 걸음에 남은 거리의 이만큼씩 다가간다
 
-# (제목, 최소 폭 설정 키, 남는 폭을 가져가는 비율).
-# 비율이 0이면 최소 폭에 고정된다. 품명과 Comment만 늘어나며, 창이 넓을 때 품명 한 열이
-# 남는 폭을 통째로 삼켜 Comment가 저 멀리 떨어져 보이던 것을 3:2로 나눠 갖게 했다.
+# (제목, 폭 설정 키, 남는 폭을 가져가는 비율). 비율이 0이면 그 폭에 고정된다.
 COLUMNS = [
     ("No", "col_no_width", 0),
     ("", "col_check_width", 0),
@@ -59,6 +45,7 @@ COLUMNS = [
     ("소재", "col_material_width", 0),
     ("열처리", "col_heat_width", 0),
     ("사이즈", "col_size_width", 0),
+    ("등록일", "col_date_width", 0),
     ("가능여부", "col_status_width", 0),
     ("최종단가", "col_price_width", 0),
 ]
@@ -74,17 +61,15 @@ HEADER_KEY_BY_WIDTH = {
     "col_status_width": "possible",
 }
 
-# 열 인덱스를 이름으로 부르기 위한 표. COLUMNS 순서를 바꾸면 여기도 같이 고쳐야 한다.
-COL_NO, COL_CHECK, COL_MODEL, COL_PARTNO = 0, 1, 2, 3
-COL_PARTNAME, COL_COMMENT, COL_MATERIAL, COL_HEAT = 4, 5, 6, 7
-COL_SIZE, COL_STATUS, COL_PRICE = 8, 9, 10
+# COLUMNS 순서를 바꾸면 여기도 같이 고쳐야 한다.
+(COL_NO, COL_CHECK, COL_MODEL, COL_PARTNO, COL_PARTNAME, COL_COMMENT,
+ COL_MATERIAL, COL_HEAT, COL_SIZE, COL_DATE, COL_STATUS, COL_PRICE) = range(12)
+
+_SHIFT, _CONTROL = 0x1, 0x4  # Windows Tk event.state 비트
 
 
 def shorten(text, max_chars):
-    """열 폭이 밀리지 않도록 긴 값은 잘라서 보여 준다(전체 값은 팝업에서 확인).
-
-    CSS의 line-clamp/말줄임에 해당하는 처리다. Tk 라벨에는 말줄임 기능이 없어 직접 자른다.
-    """
+    """긴 값을 글자 수로 자른다(전체 값은 입력창에서 확인)."""
     text = str(text)
     if len(text) <= max_chars:
         return text
@@ -92,20 +77,13 @@ def shorten(text, max_chars):
 
 
 def one_line(text):
-    """줄바꿈이 든 값(Comment 등)을 한 줄로 접는다.
-
-    v0.0.9에서 Comment를 여러 줄로 적을 수 있게 되면서, 개행이 그대로 라벨에 들어가면
-    그 행만 세로로 늘어나 표가 어긋난다. 표에서는 한 줄로 접어 보여 주고 전체는 팝업에서 본다.
-    """
+    """줄바꿈이 든 값(Comment 등)을 한 줄로 접는다. 전체는 입력창에서 본다."""
     return " ".join(str(text).split())
 
 
-def fit_text(theme, text, max_width_px):
-    """실제 글꼴 폭으로 재 가며 칸에 맞게 자른다(요청 3-4). shorten()의 상수 글자 수 대신
-    쓴다 — 소재 칸이 사용자가 끌어 조절할 수 있게 되면서 상수로는 넓혀도 `…`이 남는다.
-    """
+def fit_font_text(font, text, max_width_px):
+    """실제 글꼴 폭으로 재 가며 칸에 맞게 자른다."""
     text = str(text)
-    font = theme.table_cell_font
     if font.measure(text) <= max_width_px:
         return text
     ellipsis = "…"
@@ -122,485 +100,509 @@ def fit_text(theme, text, max_width_px):
     return text[:lo] + ellipsis
 
 
-def _fit_for_column(app, width_key, text):
-    """현재 열의 실제 설정 폭에 맞춰 한 줄 텍스트를 말줄임한다."""
-    width = app.col_widths.get(width_key, app.theme.layout[width_key])
-    usable = max(20, width - 2 * app.theme.layout["cell_pad_x"])
-    return fit_text(app.theme, text, usable)
-
-
-def _update_fitted_cell_text(app, slot, item):
-    """열 폭 변경을 데이터 글자에도 즉시 반영한다.
-
-    폭을 넓힌 뒤에도 예전 고정 글자 수로 잘린 문구가 남아 있으면 사용자는 열 조절이
-    반영되지 않은 것으로 보게 된다. 행을 통째로 다시 만들지 않고 폭의 영향을 받는 라벨만
-    갱신한다.
-    """
-    slot["model_label"].configure(text=_fit_for_column(
-        app, "col_model_width", item["model"] or "-"))
-    slot["partname_label"].configure(text=_fit_for_column(
-        app, "col_partname_width", item["part_name"] or "품명 미입력"))
-    slot["comment_label"].configure(text=_fit_for_column(
-        app, "col_comment_width", one_line(item.get("comment", "")) or "-"))
-    slot["material_label"].configure(text=_fit_for_column(
-        app, "col_material_width", item["material"] or "-"))
-    slot["heat_label"].configure(text=_fit_for_column(
-        app, "col_heat_width", hrc_text(item) or "-"))
-    slot["size_label"].configure(text=_fit_for_column(
-        app, "col_size_width", item["size"] or "-"))
-
-
-def configure_columns(container, app):
-    """헤더와 각 행이 같은 열 폭을 쓰도록 동일한 규칙을 적용한다.
-
-    v0.1.0: 폭은 theme.json 기본값이 아니라 app.col_widths(설정에 저장, 요청 3-3)를
-    먼저 본다. 사용자가 직접 끈 열(app.col_width_overridden)은 weight를 0으로 고정해
-    창을 늘려도 그 폭을 지킨다 — 그 전까지는 원래 비율(품명 3 : Comment 2)대로 나눠 갖는다.
-    """
-    layout = app.theme.layout
-    widths = getattr(app, "col_widths", {})
-    overridden = getattr(app, "col_width_overridden", set())
-    for idx, (_, width_key, weight) in enumerate(COLUMNS):
-        width = widths.get(width_key, layout[width_key])
-        effective_weight = 0 if width_key in overridden else weight
-        container.columnconfigure(idx, weight=effective_weight, minsize=width)
-
-
-def build_header(parent, app):
-    """스크롤 영역 밖에 두는 고정 헤더(th). CSS의 position:sticky 역할.
-
-    v0.1.0: 열 사이에 끌어서 폭을 바꾸는 구분선을 더한다(요청 3-2, 3-3).
-    """
-    theme = app.theme
-    c = theme.colors
-    pad_x, pad_y = theme.layout["cell_pad_x"], theme.layout["cell_pad_y"]
-
-    header = tk.Frame(parent, bg=c["th_bg"])
-    configure_columns(header, app)
-    app.header_labels = {}
-    for idx, (title, width_key, _) in enumerate(COLUMNS):
-        header_key = HEADER_KEY_BY_WIDTH.get(width_key)
-        if header_key:
-            title = app.settings.get("headers", {}).get(header_key, title)
-        if title == "최종단가":
-            anchor = "e"
-        elif title in ("가능여부", "No"):
-            anchor = "center"
-        else:
-            anchor = "w"
-        # 헤더와 데이터 행은 별도의 grid 컨테이너다. 제목 글자 자체의 요구 폭이
-        # 열 최소 폭보다 커지면 양쪽 컨테이너의 경계가 달라질 수 있으므로, 요청 폭은
-        # 한 글자로 제한하고 실제 폭은 configure_columns()가 단일 기준으로 정한다.
-        label = tk.Label(header, text=title, bg=c["th_bg"], fg=c["th_fg"], font=theme.table_head,
-                         anchor=anchor, width=1)
-        label.grid(row=0, column=idx, sticky="ew", padx=pad_x, pady=pad_y)
-        if header_key:
-            app.header_labels[header_key] = label
-    _add_column_resizers(app, header)
-    return header
-
-
-def _apply_column_widths(app):
-    """폭이 바뀐 뒤 헤더와 지금 살아 있는 행 슬롯 전부에 같은 값을 적용한다.
-
-    슬롯은 dashboard.row_slots에 담겨 재사용되므로(숨겨 둔 것도 나중에 다시 쓰인다),
-    헤더만 고치면 표가 어긋난다 -- 반드시 함께 고친다.
-    """
-    if getattr(app, "header_frame", None) is not None:
-        configure_columns(app.header_frame, app)
-    for slot in getattr(app, "row_slots", []):
-        configure_columns(slot["frame"], app)
-        item = slot.get("item")
-        if item is not None:
-            _update_fitted_cell_text(app, slot, item)
-        # v0.1.8: 열 폭이 바뀌면(드래그) 구분선 위치도 같이 옮긴다. 폭이 안 바뀌는 창
-        # 크기 변화는 row의 <Configure>가 알아서 처리하지만, 드래그는 row 전체 폭이
-        # 그대로인 채 내부 경계만 움직이므로 <Configure>가 따로 안 온다.
-        if slot.get("divider_bars"):
-            _reposition_dividers(slot["frame"], slot["divider_bars"])
-
-
 def _persist_column_widths(app):
-    """settings.json에 지금 열 폭을 남긴다(요청 3-3). 드래그를 끝낸 순간(손을 뗄 때)만 쓴다
-    -- 끄는 동안 매 픽셀마다 파일에 쓰면 느려진다.
+    """settings.json에 지금 열 폭을 남긴다. 끌기를 끝낸 순간(손을 뗄 때)과 종료 때만 쓴다.
+
+    v0.1.4: 반드시 파일에서 다시 읽어 그 위에 열 폭만 얹는다. app.settings는 켤 때 읽은
+    사본이라, 서버·공유 폴더를 쓰는 중에 다른 PC가 단가를 고쳤다면 낡은 값이다. 그대로 통째로
+    저장하면 열 폭을 끈 것만으로 남의 단가 수정이 날아간다.
     """
-    # v0.1.4: 반드시 파일에서 다시 읽어 그 위에 열 폭만 얹는다. app.settings는 프로그램을
-    # 켤 때 읽은 사본이라, 공유 폴더를 쓰는 중에 다른 PC가 단가를 고쳤다면 낡은 값이다.
-    # 그대로 통째로 저장하면 열 구분선을 끄는 것만으로 남의 단가 수정이 날아간다
-    # (파일이 로컬이던 v0.1.3까지는 생길 수 없던 사고다).
     payload = settings_store.load()
     payload["col_widths"] = dict(app.col_widths)
     if settings_store.save(payload):
-        # 화면에는 열 폭만 반영한다. 방금 읽어 온 단가까지 app에 밀어 넣으면 열 구분선을
-        # 끌었을 뿐인데 표의 금액이 통째로 바뀌어 버린다(그건 설정창이 할 일이다).
+        # 화면에는 열 폭만 반영한다(방금 읽은 단가까지 밀어 넣으면 금액이 통째로 바뀐다).
         app.settings["col_widths"] = dict(app.col_widths)
 
 
-def _reposition_resizers(header, handles):
-    for idx, handle in handles:
-        # row를 같이 안 주면 Tk가 "그 열 하나"가 아니라 그리드 전체 bbox를 돌려준다
-        # (직접 겪음 -- 핸들 9개가 전부 같은 자리에 겹쳐 소재 헤더 글자를 가렸다).
-        bbox = header.grid_bbox(row=0, column=idx)
-        if not bbox:
-            continue
-        x, _y, w, _h = bbox
-        handle.place(x=x + w - RESIZE_HANDLE_WIDTH // 2, y=0,
-                     width=RESIZE_HANDLE_WIDTH, relheight=1.0)
-        # Canvas.lift()는 위젯이 아니라 캔버스 내부 item을 올리는 메서드라 인수가 필요하다.
-        # Tk의 윈도우 raise 명령을 직접 써서 손잡이 위젯 자체를 제목 라벨 위로 올린다.
-        header.tk.call("raise", handle._w)
+class GridTable:
+    def __init__(self, parent, app):
+        self.app = app
+        theme = app.theme
+        self.theme = theme
+        c = theme.colors
 
+        self.font_cell = tkfont.Font(font=theme.table_cell)
+        self.font_bold = tkfont.Font(font=theme.table_cell_bold)
+        self.font_head = tkfont.Font(font=theme.table_head)
+        self.font_badge = tkfont.Font(font=theme.badge_bold)
+        # font.measure/metrics는 한글이 섞이면 호출당 1ms 안팎이라, 한 번 잰 값은 전부 기억해 둔다
+        # (캐시 없이 매 프레임 재면 한 화면을 그리는 데 100ms가 넘었다 — 실측).
+        self.row_h = max(26, self.font_cell.metrics("linespace") + 12)
+        self.badge_line = self.font_badge.metrics("linespace")
+        self.new_w = self.font_badge.measure("NEW") + 10
+        self.pill_w = {}
+        self.head_h = self.row_h + 2
+        self.pad = theme.layout["cell_pad_x"]
 
-def _reposition_dividers(row, bars):
-    """데이터 행의 열 구분선(요청: '열 구분선 활성화/비활성화')을 열 경계에 맞춰 세운다.
+        self.frame = tk.Frame(parent, bg=c["bg"])
+        self.frame.grid_rowconfigure(1, weight=1)
+        self.frame.grid_columnconfigure(0, weight=1)
+        self.header = tk.Canvas(self.frame, height=self.head_h, bg=c["th_bg"], highlightthickness=0)
+        self.body = tk.Canvas(self.frame, bg=c["row_bg"], highlightthickness=0, takefocus=1)
+        self.vbar = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self._on_vbar)
+        self.hbar = ttk.Scrollbar(self.frame, orient=tk.HORIZONTAL, command=self._on_hbar)
+        self.header.grid(row=0, column=0, sticky="ew")
+        self.body.grid(row=1, column=0, sticky="nsew")
+        self.vbar.grid(row=0, column=1, rowspan=2, sticky="ns")
+        self.hbar.grid(row=2, column=0, sticky="ew")
 
-    헤더의 폭 조절 손잡이(_reposition_resizers)와 같은 방식이다 -- 그리드 칸의 실제
-    픽셀 폭을 grid_bbox로 재서 그 오른쪽 끝에 1px짜리 세로 막대를 얹는다. 마지막 열
-    뒤에는 선을 두지 않는다(요청 3-1과 같은 이유, bars 개수가 COLUMNS보다 하나 적다).
-    """
-    for idx, bar in enumerate(bars):
-        bbox = row.grid_bbox(row=0, column=idx)
-        if not bbox:
-            continue
-        x, _y, w, _h = bbox
-        bar.place(x=x + w - 1, y=0, width=1, relheight=1.0)
-        row.tk.call("raise", bar._w)
+        self.items = []
+        self.empty = None
+        self.top = 0
+        self.target_top = 0
+        self.anim_id = None
+        self.xoff = 0
+        self.widths = []
+        self.xs = []
+        self.total_w = 0
+        self.hover_idx = None
+        self.row_rects = {}
+        self.fit_cache = {}
+        self.drag = None
+        self.redraw_pending = False
 
+        body = self.body
+        body.bind("<Configure>", lambda e: self._schedule_relayout())
+        body.bind("<Button-1>", self._on_click)
+        body.bind("<Double-Button-1>", self._on_double)
+        body.bind("<Button-3>", self._on_right_click)
+        body.bind("<Motion>", self._on_motion)
+        body.bind("<Leave>", self._on_leave)
+        for canvas in (body, self.header):
+            canvas.bind("<Enter>", lambda e: e.widget.bind_all("<MouseWheel>", self._on_wheel))
+            canvas.bind("<Leave>", lambda e: e.widget.unbind_all("<MouseWheel>"), add="+")
+        self.header.bind("<Configure>", lambda e: self._schedule_relayout())
+        self.header.bind("<Motion>", self._on_head_motion)
+        self.header.bind("<Button-1>", self._on_head_press)
+        self.header.bind("<B1-Motion>", self._on_head_drag)
+        self.header.bind("<ButtonRelease-1>", self._on_head_release)
 
-def _capture_actual_column_widths(app, header):
-    """드래그 시작 시 화면에 보이는 폭을 고정 폭의 기준으로 삼는다.
+        self.compute_layout()
+        self.redraw_header()
 
-    품명과 Comment는 기본 상태에서 남는 공간을 비율로 나눠 갖기 때문에 설정의 최소 폭과
-    실제 화면 폭이 다르다. 최소 폭을 기준으로 드래그하면 선택한 경계가 갑자기 튀고 엉뚱한
-    열이 늘어난다. 현재 픽셀 폭을 먼저 모두 저장해 그 상태에서 이어서 조절한다.
-    """
-    actual = {}
-    for idx, (_title, width_key, _weight) in enumerate(COLUMNS):
-        bbox = header.grid_bbox(row=0, column=idx)
-        if bbox:
-            actual[width_key] = max(MIN_COL_WIDTH, int(bbox[2]))
-    if len(actual) != len(COLUMNS):
-        return False
-    app.col_widths.update(actual)
-    app.col_width_overridden.update(actual)
-    _apply_column_widths(app)
-    header.update_idletasks()
-    return True
+    # ---------- 열 배치 ----------
 
+    def _base_widths(self):
+        widths = getattr(self.app, "col_widths", {})
+        layout = self.theme.layout
+        return [max(MIN_COL_WIDTH, int(widths.get(key, layout[key]))) for _, key, _ in COLUMNS]
 
-def _add_column_resizers(app, header):
-    """열과 열 사이에 연한 세로 구분선을 두고, 끌면 좌우 폭이 바뀐다(요청 3-2, 3-3).
+    def compute_layout(self):
+        """열 폭·왼쪽 x를 정한다. 끌어서 정한 열은 그 폭을 지키고, 나머지(품명·Comment)가
+        남는 폭을 weight 비율로 나눠 갖는다."""
+        base = self._base_widths()
+        viewport = max(self.body.winfo_width(), 1)
+        overridden = getattr(self.app, "col_width_overridden", set())
+        flex = [i for i, (_, key, weight) in enumerate(COLUMNS) if weight > 0 and key not in overridden]
+        extra = viewport - sum(base) if viewport > 1 else 0
+        if extra > 0 and flex:
+            weight_sum = sum(COLUMNS[i][2] for i in flex)
+            given = 0
+            for pos, i in enumerate(flex):
+                share = extra - given if pos == len(flex) - 1 else extra * COLUMNS[i][2] // weight_sum
+                base[i] += share
+                given += share
+        elif extra < 0 and viewport > 1:
+            base = self._shrink_to_fit(base, viewport)
+        self.widths = base
+        self.xs = []
+        x = 0
+        for width in base:
+            self.xs.append(x)
+            x += width
+        self.total_w = x
+        self.xoff = max(0, min(self.xoff, self.total_w - viewport))
 
-    데이터 행에는 선을 넣지 않는다(요청 3-1) -- 이 구분선은 헤더 위에만 얹는다(`place`로
-    경계 위치에 겹쳐 그린다. 헤더는 grid라 열과 열 사이에 별도 칸을 끼워 넣지 않아도 된다).
-    """
-    theme = app.theme
-    handles = []
-    drag_state = {}
+    @staticmethod
+    def _shrink_to_fit(base, viewport):
+        """창이 열 폭 합보다 좁으면 가로 스크롤 대신 모든 열을 비율로 줄인다(최소 폭은 지킨다)."""
+        widths = list(base)
+        for _ in range(len(widths)):
+            over = sum(widths) - viewport
+            if over <= 0:
+                break
+            room = [w - MIN_COL_WIDTH for w in widths]
+            total_room = sum(room)
+            if total_room <= 0:
+                break
+            cut = min(over, total_room)
+            taken = 0
+            for i, r in enumerate(room):
+                part = cut - taken if i == len(room) - 1 else cut * r // total_room
+                part = min(part, r)
+                widths[i] -= part
+                taken += part
+        return widths
 
-    for idx in range(len(COLUMNS) - 1):
-        # 7px 폭 전체가 마우스 손잡이지만 실제 선은 가운데 1px만 그린다. 얇은 선의
-        # 시인성과 잡기 쉬운 영역을 함께 확보한다.
-        handle = tk.Canvas(
-            header, bg=theme.color("th_bg"), highlightthickness=0,
-            cursor="sb_h_double_arrow", takefocus=0)
-        line_id = handle.create_line(
-            RESIZE_HANDLE_WIDTH // 2, 0, RESIZE_HANDLE_WIDTH // 2, 1,
-            fill=theme.color("checkbox_border"), width=1)
-        handles.append((idx, handle))
-        left_key = COLUMNS[idx][1]
-        right_key = COLUMNS[idx + 1][1]
+    def _schedule_relayout(self):
+        if self.redraw_pending:
+            return
+        self.redraw_pending = True
+        self.frame.after_idle(self.relayout)
 
-        def start_drag(event, left_key=left_key, right_key=right_key):
-            if not _capture_actual_column_widths(app, header):
+    def relayout(self):
+        """열 폭·창 크기·설정이 바뀌었을 때. 머리글과 본문을 같이 다시 그린다."""
+        self.redraw_pending = False
+        try:
+            self.compute_layout()
+            self.redraw_header()
+            self.redraw_body()
+        except tk.TclError:
+            pass  # 화면을 다시 짓는 중에 예약이 늦게 도착한 경우
+
+    # ---------- 머리글 ----------
+
+    def redraw_header(self):
+        theme, c = self.theme, self.theme.colors
+        header = self.header
+        header.delete("all")
+        header.configure(bg=c["th_bg"])
+        width = max(header.winfo_width(), self.total_w)
+        headers = self.app.settings.get("headers", {})
+        for i, (title, key, _) in enumerate(COLUMNS):
+            header_key = HEADER_KEY_BY_WIDTH.get(key)
+            if header_key:
+                title = headers.get(header_key, title)
+            x0 = self.xs[i] - self.xoff
+            x1 = x0 + self.widths[i]
+            if x1 < 0 or x0 > width:
+                continue
+            text = fit_font_text(self.font_head, title, max(10, self.widths[i] - 2 * self.pad))
+            mid = self.head_h // 2 - 1
+            if title == "최종단가":
+                header.create_text(x1 - self.pad, mid, text=text, anchor="e", fill=c["th_fg"], font=theme.table_head)
+            elif title in ("가능여부", "No", "등록일") or i == COL_CHECK:
+                header.create_text((x0 + x1) // 2, mid, text=text, anchor="center", fill=c["th_fg"],
+                                   font=theme.table_head)
+            else:
+                header.create_text(x0 + self.pad, mid, text=text, anchor="w", fill=c["th_fg"], font=theme.table_head)
+            if i < len(COLUMNS) - 1:
+                header.create_line(x1, 5, x1, self.head_h - 6, fill=c["checkbox_border"], tags=(f"sep{i}",))
+        header.create_line(0, self.head_h - 1, width, self.head_h - 1, fill=c["th_underline"], width=2)
+
+    def _boundary_at(self, x):
+        """머리글 x 좌표가 어느 열 경계(오른쪽 끝) 근처인가. 없으면 None."""
+        for i in range(len(COLUMNS) - 1):
+            edge = self.xs[i] + self.widths[i] - self.xoff
+            if abs(x - edge) <= GRAB:
+                return i
+        return None
+
+    def _on_head_motion(self, event):
+        if self.drag is not None:
+            return
+        self.header.configure(cursor="sb_h_double_arrow" if self._boundary_at(event.x) is not None else "")
+
+    def _on_head_press(self, event):
+        i = self._boundary_at(event.x)
+        if i is None:
+            return
+        # 끌기 시작 때 화면에 보이는 폭을 전부 고정 폭으로 삼는다. 품명·Comment는 기본 상태에서
+        # 남는 폭을 나눠 가져 설정의 폭과 실제 폭이 다르다 — 설정 폭을 기준으로 끌면 경계가
+        # 튀고 엉뚱한 열이 늘어난다.
+        app = self.app
+        actual = {key: max(MIN_COL_WIDTH, self.widths[k]) for k, (_, key, _) in enumerate(COLUMNS)}
+        app.col_widths.update(actual)
+        app.col_width_overridden.update(actual)
+        left_key, right_key = COLUMNS[i][1], COLUMNS[i + 1][1]
+        self.drag = {"x": event.x_root, "left": app.col_widths[left_key], "right": app.col_widths[right_key],
+                     "left_key": left_key, "right_key": right_key}
+
+    def _on_head_drag(self, event):
+        drag = self.drag
+        if drag is None:
+            return
+        pair = drag["left"] + drag["right"]
+        new_left = max(MIN_COL_WIDTH, min(pair - MIN_COL_WIDTH, drag["left"] + event.x_root - drag["x"]))
+        self.app.col_widths[drag["left_key"]] = int(new_left)
+        self.app.col_widths[drag["right_key"]] = int(pair - new_left)
+        self._schedule_relayout()
+
+    def _on_head_release(self, event):
+        if self.drag is None:
+            return
+        self.drag = None
+        self.relayout()
+        _persist_column_widths(self.app)
+
+    # ---------- 본문 ----------
+
+    def set_rows(self, items, reset_scroll=False):
+        self.items = list(items)
+        self.empty = None
+        if reset_scroll:
+            self._set_top(0, animate=False)
+        self.redraw_body()
+
+    def set_empty(self, title, detail, reset_scroll=False):
+        self.items = []
+        self.empty = (title, detail)
+        if reset_scroll:
+            self._set_top(0, animate=False)
+        self.redraw_body()
+
+    def _fit_raw(self, font, text, max_px):
+        key = (id(font), text, max_px)
+        hit = self.fit_cache.get(key)
+        if hit is None:
+            if len(self.fit_cache) > 6000:
+                self.fit_cache.clear()
+            hit = self.fit_cache[key] = fit_font_text(font, text, max(10, max_px))
+        return hit
+
+    def _fit(self, font, text, width):
+        return self._fit_raw(font, text, width - 2 * self.pad)
+
+    def row_bg(self, idx, hover=False):
+        c = self.theme.colors
+        item = self.items[idx]
+        if hover:
+            return c["row_hover"]
+        if item["no"] in self.app.selected_nos:
+            return c["row_selected_bg"]
+        if self.app.is_duplicate_item(item):
+            return c["row_dup_bg"] if idx % 2 == 0 else c["row_dup_alt_bg"]
+        return c["row_bg"] if idx % 2 == 0 else c["row_alt_bg"]
+
+    def redraw_body(self):
+        body, c = self.body, self.theme.colors
+        body.delete("all")
+        self.row_rects = {}
+        self.hover_idx = None
+        view_h, view_w = max(body.winfo_height(), 1), max(body.winfo_width(), 1)
+        count = len(self.items)
+        self.top = max(0, min(self.top, max(0, count * self.row_h - view_h)))
+        self.target_top = max(0, min(self.target_top, max(0, count * self.row_h - view_h)))
+        width = max(view_w, self.total_w)
+
+        first = self.top // self.row_h
+        last = min(count, (self.top + view_h) // self.row_h + 1)
+        for idx in range(first, last):
+            self._draw_row(idx, idx * self.row_h - self.top, width, view_w)
+
+        if self.app.display_prefs.get("dividers", True):
+            for i in range(len(COLUMNS)):
+                x = self.xs[i] + self.widths[i] - self.xoff
+                if 0 <= x <= view_w:
+                    body.create_line(x, 0, x, view_h, fill=c["col_divider"])
+        if not count and self.empty:
+            title, detail = self.empty
+            cx, cy = view_w // 2, min(view_h // 2, 140)
+            body.create_text(cx, cy - 12, text=title, fill=c["text"], font=self.theme.table_cell_bold)
+            body.create_text(cx, cy + 14, text=detail, fill=c["muted"], font=self.theme.table_cell)
+        self._update_bars(view_w, view_h, count)
+
+    def _draw_row(self, idx, y, width, view_w):
+        body, c, theme = self.body, self.theme.colors, self.theme
+        app, item, pad = self.app, self.items[idx], self.pad
+        mid = y + self.row_h // 2
+        selected = item["no"] in app.selected_nos
+        duplicate = app.is_duplicate_item(item)
+        self.row_rects[idx] = body.create_rectangle(0, y, width, y + self.row_h, fill=self.row_bg(idx), outline="")
+        if app.display_prefs.get("dividers", True):
+            body.create_line(0, y + self.row_h - 1, width, y + self.row_h - 1, fill=c["col_divider"])
+        _, _, final_price = calc_row(item, app.rates)
+
+        def cell(i):
+            x0 = self.xs[i] - self.xoff
+            return x0, self.widths[i], x0 + self.widths[i]
+
+        def visible(i):
+            x0, w, x1 = cell(i)
+            return x1 >= 0 and x0 <= view_w
+
+        def text_cell(i, text, font=None, fill=None, muted=False):
+            if not visible(i):
                 return
-            drag_state.clear()
-            drag_state["x"] = event.x_root
-            drag_state["left"] = app.col_widths[left_key]
-            drag_state["right"] = app.col_widths[right_key]
+            x0, w, _ = cell(i)
+            font = font or self.font_cell
+            body.create_text(x0 + pad, mid, text=self._fit(font, text, w), anchor="w", font=font,
+                             fill=fill or (c["muted"] if muted else c["text"]))
 
-        def on_drag(event, left_key=left_key, right_key=right_key):
-            if "x" not in drag_state:
-                return
-            delta = event.x_root - drag_state["x"]
-            pair_width = drag_state["left"] + drag_state["right"]
-            new_left = max(
-                MIN_COL_WIDTH,
-                min(pair_width - MIN_COL_WIDTH, drag_state["left"] + delta))
-            new_right = pair_width - new_left
-            app.col_widths[left_key] = int(new_left)
-            app.col_widths[right_key] = int(new_right)
-            app.col_width_overridden.add(left_key)
-            app.col_width_overridden.add(right_key)
-            _apply_column_widths(app)
-            # Frame 폭은 그대로라 <Configure>가 다시 오지 않을 수 있다. 레이아웃을 지금
-            # 계산한 뒤 손잡이를 옮겨야 드래그 중 선이 마우스를 따라온다.
-            header.update_idletasks()
-            _reposition_resizers(header, handles)
+        if visible(COL_NO):
+            x0, w, _ = cell(COL_NO)
+            body.create_text(x0 + w // 2, mid, text=str(idx + 1), fill=c["muted"], font=theme.table_cell)
 
-        def end_drag(event):
-            drag_state.clear()
-            _persist_column_widths(app)
+        if visible(COL_CHECK):
+            x0, w, _ = cell(COL_CHECK)
+            size = min(16, self.row_h - 12)
+            bx, by = x0 + (w - size) // 2, mid - size // 2
+            box_bg = c["accent"] if selected else c["card_alt"]
+            body.create_rectangle(bx, by, bx + size, by + size, fill=box_bg,
+                                  outline=c["accent"] if selected else c["checkbox_border"])
+            if selected:
+                body.create_line(bx + 3, by + size // 2, bx + size // 2 - 1, by + size - 4, bx + size - 3, by + 3,
+                                 fill=c["bg"], width=2)
 
-        handle.bind("<Button-1>", start_drag)
-        handle.bind("<B1-Motion>", on_drag)
-        handle.bind("<ButtonRelease-1>", end_drag)
-        handle.bind("<Enter>", lambda event, canvas=handle, item=line_id:
-                    canvas.itemconfigure(item, fill=theme.color("accent"), width=2))
-        handle.bind("<Leave>", lambda event, canvas=handle, item=line_id:
-                    canvas.itemconfigure(item, fill=theme.color("checkbox_border"), width=1))
-        handle.bind("<Configure>", lambda event, canvas=handle, item=line_id:
-                    canvas.coords(item, RESIZE_HANDLE_WIDTH // 2, 0,
-                                  RESIZE_HANDLE_WIDTH // 2, event.height))
+        text_cell(COL_MODEL, item["model"] or "-")
+        if visible(COL_PARTNO):
+            x0, w, _ = cell(COL_PARTNO)
+            px = x0 + pad
+            if item.get("is_new_registration"):
+                bw = self.new_w
+                bh = self.badge_line + 2
+                body.create_rectangle(px, mid - bh // 2, px + bw, mid + bh // 2, fill=c["new_bg"], outline=c["new_border"])
+                body.create_text(px + bw // 2, mid, text="NEW", fill=c["new_fg"], font=theme.badge_bold)
+                px += bw + 6
+            label = item["part_no"] or f"NO. {idx + 1} 미입력"
+            body.create_text(px, mid, text=self._fit_raw(self.font_bold, label, x0 + w - px - pad),
+                             anchor="w", font=theme.table_cell_bold,
+                             fill=c["row_dup_fg"] if duplicate else c["text"])
+        text_cell(COL_PARTNAME, item["part_name"] or "품명 미입력")
+        text_cell(COL_COMMENT, one_line(item.get("comment", "")) or "-")
+        text_cell(COL_MATERIAL, item["material"] or "-")
+        text_cell(COL_HEAT, hrc_text(item) or "-")
+        text_cell(COL_SIZE, item["size"] or "-")
+        if visible(COL_DATE):
+            x0, w, _ = cell(COL_DATE)
+            body.create_text(x0 + w // 2, mid, text=self._fit(self.font_cell, item["created_at"], w),
+                             font=theme.table_cell, fill=c["muted"])
+        if visible(COL_STATUS):
+            x0, w, _ = cell(COL_STATUS)
+            status_bg, status_fg, status_border = theme.get_status_colors(item["possible"])
+            label = shorten(item["possible"], 9)
+            if label not in self.pill_w:
+                self.pill_w[label] = self.font_badge.measure(label) + 18
+            pw = min(w - 10, self.pill_w[label])
+            ph = self.badge_line + 4
+            cx = x0 + w // 2
+            body.create_rectangle(cx - pw // 2, mid - ph // 2, cx + pw // 2, mid + ph // 2,
+                                  fill=status_bg, outline=status_border)
+            body.create_text(cx, mid, text=label, fill=status_fg, font=theme.badge_bold)
+        if visible(COL_PRICE):
+            x0, w, x1 = cell(COL_PRICE)
+            body.create_text(x1 - pad, mid, text=f"{final_price:,}", anchor="e", fill=c["accent"],
+                             font=theme.table_num_bold)
 
-    app.header_resize_handles = handles
-    header.bind("<Configure>", lambda e: _reposition_resizers(header, handles))
-    header.after_idle(lambda: _reposition_resizers(header, handles))
+    def _update_bars(self, view_w, view_h, count):
+        total_h = count * self.row_h
+        if total_h <= view_h:
+            self.vbar.set(0, 1)
+        else:
+            self.vbar.set(self.top / total_h, (self.top + view_h) / total_h)
+        if self.total_w <= view_w:
+            self.hbar.set(0, 1)
+            self.hbar.grid_remove()   # 열이 다 보이면 가로 스크롤바는 숨긴다
+        else:
+            self.hbar.grid()
+            self.hbar.set(self.xoff / self.total_w, (self.xoff + view_w) / self.total_w)
 
+    # ---------- 스크롤 ----------
 
-def build_header_underline(parent, theme):
-    """헤더 아래 2px 파란 줄(border-bottom: 2px solid #4fb0ff)."""
-    return tk.Frame(parent, bg=theme.color("th_underline"), height=2)
+    def _max_top(self):
+        return max(0, len(self.items) * self.row_h - max(self.body.winfo_height(), 1))
 
+    def _set_top(self, value, animate=True):
+        value = max(0, min(int(value), self._max_top()))
+        self.target_top = value
+        if animate:
+            if self.anim_id is None:
+                self.anim_id = self.frame.after(ANIM_MS, self._animate)
+            return
+        if self.anim_id is not None:
+            self.frame.after_cancel(self.anim_id)
+            self.anim_id = None
+        if value != self.top or self.items:
+            self.top = value
+            self.redraw_body()
 
-def render_empty_message(app, title, detail):
-    theme = app.theme
-    c = theme.colors
-    empty = tk.Frame(app.row_container, bg=c["card"], highlightthickness=1,
-                     highlightbackground=c["line"], padx=28, pady=28)
-    empty.grid(row=0, column=0, columnspan=len(COLUMNS), sticky="ew", pady=10)
-    tk.Label(empty, text=title, bg=c["card"], fg=c["text"], font=theme.card_title).pack(anchor="w")
-    tk.Label(empty, text=detail, bg=c["card"], fg=c["muted"]).pack(anchor="w", pady=(8, 0))
-    return empty
+    def _animate(self):
+        """휠 스크롤을 부드럽게 보간한다. 한 걸음에 남은 거리의 일부씩 다가가다 가까워지면 멈춘다."""
+        self.anim_id = None
+        distance = self.target_top - self.top
+        if distance == 0:
+            return
+        step = int(distance * ANIM_EASE)
+        if step == 0:
+            step = 1 if distance > 0 else -1
+        self.top += step
+        self.redraw_body()
+        if self.top != self.target_top:
+            self.anim_id = self.frame.after(ANIM_MS, self._animate)
 
+    def _on_wheel(self, event):
+        direction = -1 if event.delta > 0 else 1
+        base = self.target_top if self.anim_id is not None else self.top
+        self._set_top(base + direction * SCROLL_ROWS * self.row_h)
 
-def create_row_slot(app):
-    """행 위젯 한 벌을 만든다. 이후 update_row_slot()이 이 위젯들을 재사용해서
-    텍스트·색만 바꾼다 — 검색·체크·더보기마다 다시 만들지 않는다.
+    def _on_vbar(self, action, *args):
+        if action == "moveto":
+            self._set_top(float(args[0]) * len(self.items) * self.row_h, animate=False)
+        elif action == "scroll":
+            amount, unit = int(args[0]), args[1]
+            step = self.row_h if unit == "units" else max(self.row_h, self.body.winfo_height() - self.row_h)
+            self._set_top(self.top + amount * step, animate=False)
 
-    셀마다 감싸는 프레임을 두지 않고 라벨을 행 프레임에 바로 배치한다
-    (품번 칸만 배지·날짜를 함께 담아야 해서 프레임을 쓴다).
-    """
-    theme = app.theme
-    c = theme.colors
-    layout = theme.layout
-    pad_x, pad_y = layout["cell_pad_x"], layout["cell_pad_y"]
+    def _on_hbar(self, action, *args):
+        view_w = max(self.body.winfo_width(), 1)
+        limit = max(0, self.total_w - view_w)
+        if action == "moveto":
+            self.xoff = int(max(0.0, min(1.0, float(args[0]))) * self.total_w)
+        elif action == "scroll":
+            amount, unit = int(args[0]), args[1]
+            self.xoff += amount * (40 if unit == "units" else view_w - 40)
+        self.xoff = max(0, min(self.xoff, limit))
+        self.redraw_header()
+        self.redraw_body()
 
-    row = tk.Frame(app.row_container, bg=c["row_bg"])
-    configure_columns(row, app)
+    def scroll_to_top(self):
+        self._set_top(0, animate=False)
 
-    # duplicate는 여기서 먼저 False로 둔다 -- 마우스가 슬롯 위를 지나가면 <Leave> 콜백이
-    # row_normal_bg(slot)을 부르는데, 그게 update_row_slot보다 먼저 일어날 수 있다.
-    slot = {"frame": row, "no": None, "parity": 0, "duplicate": False,
-            "new_badge": None, "tinted": []}
+    # ---------- 입력 ----------
 
-    def place(widget, column, sticky="ew"):
-        widget.grid(row=0, column=column, sticky=sticky, padx=pad_x, pady=pad_y)
-        return widget
+    def _row_at(self, y):
+        idx = (y + self.top) // self.row_h
+        return idx if 0 <= idx < len(self.items) else None
 
-    def label(column, font, anchor="w", fg=c["text"]):
-        # 헤더와 같은 이유로 텍스트 길이가 열 경계를 밀지 않게 한다. 긴 값은
-        # update_row_slot()에서 열 폭에 맞춰 말줄임 처리한다.
-        widget = tk.Label(row, bg=c["row_bg"], fg=fg, font=font, anchor=anchor, width=1)
-        slot["tinted"].append(widget)
-        place(widget, column)
-        return widget
+    def _col_at(self, x):
+        x += self.xoff
+        for i in range(len(COLUMNS)):
+            if self.xs[i] <= x < self.xs[i] + self.widths[i]:
+                return i
+        return None
 
-    # 맨 앞 순번(요청 1-3). 카드의 내부 번호가 아니라 지금 화면에 보이는 차례다.
-    slot["no_label"] = label(COL_NO, theme.table_cell, anchor="center", fg=c["muted"])
+    def _on_click(self, event):
+        self.body.focus_set()
+        idx = self._row_at(event.y)
+        if idx is None:
+            return
+        no = self.items[idx]["no"]
+        if self._col_at(event.x) == COL_CHECK or event.state & _CONTROL:
+            self.app.handle_row_click(no, "toggle")
+        elif event.state & _SHIFT:
+            self.app.handle_row_click(no, "range")
+        else:
+            self.app.handle_row_click(no, "plain")
 
-    # 선택 체크박스. 콜백이 slot["no"]를 그때그때 읽으므로 슬롯을 재사용해도 다시
-    # 만들 필요가 없다(요청: "체크박스 선택 시 화면 새로 고침 및 깜빡임이 발생함").
-    slot["checkbox"] = place(
-        make_checkbox(row, theme, lambda: app.toggle_item_selection(slot["no"])),
-        COL_CHECK, sticky="w")
+    def _on_double(self, event):
+        # Tk는 빠른 두 번째 클릭에 <Button-1>이 아니라 <Double-Button-1>만 보낸다. 체크 칸은 연달아
+        # 눌러도 누른 만큼 켜고 꺼져야 하므로 그냥 클릭으로 처리하고, 입력창은 열지 않는다.
+        idx = self._row_at(event.y)
+        if idx is None:
+            return
+        if self._col_at(event.x) == COL_CHECK:
+            self._on_click(event)
+            return
+        self.app.open_popup(self.items[idx]["no"])
 
-    slot["model_label"] = label(COL_MODEL, theme.table_cell)
+    def _on_right_click(self, event):
+        idx = self._row_at(event.y)
+        if idx is not None:
+            self.app.open_row_context_menu(self.items[idx]["no"], event)
 
-    # 품번 (저장 전이면 NEW 배지) + 그 아래 작성일
-    partno_box = tk.Frame(row, bg=c["row_bg"])
-    # 품번/날짜의 내용 길이가 독립된 행 grid의 열 폭을 넓혀 헤더와 어긋나지 않게 한다.
-    partno_box.grid_propagate(False)
-    slot["partno_box"] = partno_box
-    slot["tinted"].append(partno_box)
-    place(partno_box, COL_PARTNO)
-    partno_top = tk.Frame(partno_box, bg=c["row_bg"])
-    partno_top.pack(anchor="w", fill=tk.X)
-    slot["partno_top"] = partno_top
-    slot["tinted"].append(partno_top)
-    partno_label = tk.Label(partno_top, bg=c["row_bg"], fg=c["text"], font=theme.table_cell_bold, anchor="w")
-    partno_label.pack(side=tk.LEFT)
-    slot["partno_label"] = partno_label
-    slot["tinted"].append(partno_label)
-    date_label = tk.Label(partno_box, bg=c["row_bg"], fg=c["muted"], font=theme.table_sub, anchor="w")
-    date_label.pack(anchor="w")
-    slot["date_label"] = date_label
-    slot["tinted"].append(date_label)
+    def _on_motion(self, event):
+        idx = self._row_at(event.y)
+        if idx == self.hover_idx:
+            return
+        self._paint_hover(self.hover_idx, False)
+        self.hover_idx = idx
+        self._paint_hover(idx, True)
 
-    slot["partname_label"] = label(COL_PARTNAME, theme.table_cell)
-    # Comment는 품명과 소재 사이(요청 1-4).
-    slot["comment_label"] = label(COL_COMMENT, theme.table_cell, fg=c["muted"])
-    slot["material_label"] = label(COL_MATERIAL, theme.table_cell, fg=c["muted"])
-    slot["heat_label"] = label(COL_HEAT, theme.table_cell, fg=c["muted"])
-    slot["size_label"] = label(COL_SIZE, theme.table_cell, fg=c["muted"])
+    def _on_leave(self, event):
+        self._paint_hover(self.hover_idx, False)
+        self.hover_idx = None
 
-    # 가능여부 배지는 자기 색(성공/경고/위험)을 유지해야 하므로 hover 시 물드는 tinted에서 뺀다.
-    slot["status_label"] = place(tk.Label(row, font=theme.badge_bold, padx=8, pady=2, width=1),
-                                 COL_STATUS, sticky="")
-
-    # 최종단가 (오른쪽 정렬). 자릿수가 맞아 보이도록 고정폭 글꼴(num_family)을 쓴다.
-    slot["price_label"] = label(COL_PRICE, theme.table_num_bold, anchor="e", fg=c["accent_2"])
-
-    # v0.1.8: 열 구분선(요청 '열 구분선 활성화/비활성화'). 헤더의 폭 조절 손잡이와 달리
-    # 끌 수는 없는 얇은 선이고, 표시 여부는 update_row_slot에서 app.display_prefs로 정한다.
-    # place()로 grid 위에 얹으므로 grid 열 개수(그러니까 폭 계산)에는 영향이 없다.
-    divider_bars = [tk.Frame(row, bg=c["row_bg"]) for _ in range(len(COLUMNS) - 1)]
-    slot["divider_bars"] = divider_bars
-    row.bind("<Configure>", lambda event, r=row, bars=divider_bars: _reposition_dividers(r, bars))
-
-    _bind_row_behavior(app, slot)
-    return slot
-
-
-def update_row_slot(app, slot, item, row_index):
-    """재사용 중인 슬롯에 항목 데이터를 채운다. 위젯을 새로 만들지 않는다.
-
-    row_index는 화면에 보이는 차례(0부터)이며, 맨 앞 No 열에 +1 해서 표시한다.
-    """
-    theme = app.theme
-    c = theme.colors
-    no = item["no"]
-    slot["no"] = no
-    slot["item"] = item
-    slot["parity"] = row_index % 2
-    # v0.1.3: 품번이 겹치는 행은 배경색으로 알린다(요청 3). 판정은 app이 목록 전체를 보고
-    # 미리 해 둔 집합에서 가져온다 -- 행마다 다시 세면 카드 수의 제곱만큼 일이 늘어난다.
-    slot["duplicate"] = app.is_duplicate_item(item)
-    _, _, final_price = calc_row(item, app.rates)
-
-    bg = app.row_normal_bg(slot)
-    _paint(app, slot, bg)
-
-    # v0.1.8: 구분선을 켰을 때만 여기서 강조색을 입힌다. 껐을 때는 _paint가 배경이
-    # 바뀔 때마다 같이 막대를 배경색으로 칠해 숨기므로 여기서 더 할 일이 없다.
-    if app.display_prefs.get("dividers", True):
-        divider_color = app.theme.color("col_divider")
-        for bar in slot.get("divider_bars", []):
-            bar.configure(bg=divider_color)
-
-    paint_checkbox(app, slot, no in app.selected_nos)
-
-    slot["no_label"].configure(text=str(row_index + 1))
-    if item.get("is_new_registration"):
-        if slot["new_badge"] is None:
-            badge = tk.Label(slot["partno_top"], text="NEW", bg=c["new_bg"], fg=c["new_fg"],
-                             font=theme.small, padx=5, pady=0, highlightthickness=1,
-                             highlightbackground=c["new_border"])
-            badge.pack(side=tk.LEFT, padx=(0, 6), before=slot["partno_label"])
-            slot["new_badge"] = badge
-            slot["bind_all"](badge)  # 나중에 생긴 위젯도 hover/click 대상에 포함시킨다
-    elif slot["new_badge"] is not None:
-        slot["new_badge"].destroy()
-        slot["new_badge"] = None
-
-    # 중복 행은 배경만으로도 눈에 띄지만, 어느 칸 때문에 물들었는지 알 수 있게 품번 글자색도
-    # 함께 바꾼다(색맹 사용자를 위해 배경 하나에만 기대지 않는다).
-    slot["partno_label"].configure(
-        text=shorten(item["part_no"] or f"NO. {row_index + 1} 미입력", 15),
-        fg=c["row_dup_fg"] if slot["duplicate"] else c["text"])
-    slot["date_label"].configure(text=item["created_at"])
-    _update_fitted_cell_text(app, slot, item)
-
-    status_bg, status_fg, _ = theme.get_status_colors(item["possible"])
-    slot["status_label"].configure(text=shorten(item["possible"], 9), bg=status_bg, fg=status_fg)
-
-    slot["price_label"].configure(text=f"{final_price:,}")
-
-    slot["frame"].grid(row=row_index, column=0, sticky="ew")
-
-
-def paint_checkbox(app, slot, selected):
-    """체크박스 칸의 색과 글리프만 다시 칠한다(행 전체를 다시 그리지 않기 위해)."""
-    c = app.theme.colors
-    box_bg = c["accent"] if selected else c["card_alt"]
-    box_fg = c["bg"] if selected else c["muted"]
-    border = box_bg if selected else c["checkbox_border"]
-    checkbox = slot["checkbox"]
-    checkbox.configure(bg=box_bg, highlightbackground=border)
-    checkbox.glyph.configure(text=("V" if selected else ""), bg=box_bg, fg=box_fg)
-
-
-def hide_row_slot(slot):
-    slot["frame"].grid_remove()
-
-
-def _bind_row_behavior(app, slot):
-    """행 hover 색과 선택·열기 동작을 슬롯 생성 시 한 번만 건다.
-
-    콜백은 슬롯 딕셔너리(slot["no"])를 호출 시점에 읽으므로, 이 슬롯이 나중에
-    다른 항목을 표시하도록 재사용되어도 다시 바인딩할 필요가 없다.
-
-    윈도우 탐색기와 같은 규칙이다(요청 2-1, 2-2).
-        클릭             그 행만 선택
-        Ctrl+클릭        그 행을 선택에 더하거나 뺀다
-        Shift+클릭       마지막 기준 행부터 이 행까지 범위 선택
-        더블클릭         카드 열기
-        우클릭           삭제/입력창 열기 메뉴(v0.1.2)
-    Tk는 더블클릭 때 <Button-1>을 먼저 한 번 발생시키므로 첫 클릭의 선택도 함께 일어난다.
-    탐색기도 같은 동작이라 그대로 둔다(지연 타이머를 넣으면 클릭 반응만 굼떠진다).
-    """
-    def on_enter(event):
-        _paint(app, slot, app.theme.colors["row_hover"])
-
-    def on_leave(event):
-        _paint(app, slot, app.row_normal_bg(slot))
-
-    def click(mode):
-        def handler(event):
-            if slot["no"] is not None:
-                app.handle_row_click(slot["no"], mode)
-            return "break"
-        return handler
-
-    def on_double(event):
-        if slot["no"] is not None:
-            app.open_popup(slot["no"])
-        return "break"
-
-    def on_right_click(event):
-        if slot["no"] is not None:
-            app.open_row_context_menu(slot["no"], event)
-        return "break"
-
-    on_plain = click("plain")
-    on_ctrl = click("toggle")
-    on_shift = click("range")
-
-    def bind_all(widget):
-        # 체크박스처럼 자체 클릭 동작이 있는 위젯(is_control)은 왼쪽 클릭 계열만
-        # 건드리지 않는다 -- 우클릭 메뉴는 체크박스 위에서도 똑같이 떠야 한다(요청).
-        is_control = getattr(widget, "is_control", False)
-        if not is_control:
-            widget.bind("<Button-1>", on_plain)
-            widget.bind("<Control-Button-1>", on_ctrl)
-            widget.bind("<Shift-Button-1>", on_shift)
-            widget.bind("<Double-Button-1>", on_double)
-            widget.bind("<Enter>", on_enter)
-            widget.bind("<Leave>", on_leave)
-        widget.bind("<Button-3>", on_right_click)
-        for child in widget.winfo_children():
-            bind_all(child)
-
-    bind_all(slot["frame"])
-    slot["bind_all"] = bind_all
-
-
-def _paint(app, slot, color):
-    slot["frame"].configure(bg=color)
-    for widget in slot["tinted"]:
-        widget.configure(bg=color)
-    # v0.1.8: 구분선이 꺼져 있으면 hover/선택으로 배경이 바뀔 때마다 막대도 같이 숨긴다.
-    # 켜져 있을 때는 손대지 않는다 -- TSERP도 border-right 색은 hover와 무관하게 고정이다.
-    if not app.display_prefs.get("dividers", True):
-        for bar in slot.get("divider_bars", []):
-            bar.configure(bg=color)
+    def _paint_hover(self, idx, on):
+        rect = self.row_rects.get(idx) if idx is not None else None
+        if rect is not None:
+            self.body.itemconfigure(rect, fill=self.row_bg(idx, hover=on))

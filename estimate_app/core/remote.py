@@ -84,8 +84,8 @@ def probe(base, timeout=PROBE_TIMEOUT):
     return ""
 
 
-def get_settings(base):
-    """(설정 dict, 오류). 서버에 아직 설정이 없으면 (None, REASON_MISSING)."""
+def fetch_settings(base):
+    """(서버 응답 dict, 오류). 응답의 mtime·updated_by까지 필요할 때 쓴다(v1.4.0)."""
     body, error = _request(base, "GET", "/settings")
     if error:
         return None, error
@@ -93,10 +93,31 @@ def get_settings(base):
         return None, REASON_BROKEN
     if not body.get("exists"):
         return None, REASON_MISSING
-    settings = body.get("settings")
-    if not isinstance(settings, dict):
+    if not isinstance(body.get("settings"), dict):
         return None, REASON_BROKEN
-    return settings, None
+    return body, None
+
+
+def get_settings(base):
+    """(설정 dict, 오류). 서버에 아직 설정이 없으면 (None, REASON_MISSING)."""
+    body, error = fetch_settings(base)
+    return (body["settings"] if body else None), error
+
+
+def wait_changes(base, since="", wait=0):
+    """변경 표시(/changes, 서버 1.1.0+). since가 서버의 지금 값과 같으면 서버가 바뀔 때까지
+    최대 wait초 붙잡고 있다가 답한다(롱폴링). 서버 1.0.0이면 (…, REASON_MISSING).
+
+    클라이언트 쪽 시간 제한은 wait보다 넉넉히 둔다 — 서버가 꽉 채워 기다린 뒤 답하는 것이
+    정상이므로, 같은 값이면 정상 응답을 '못 닿음'으로 잘못 판정한다.
+    """
+    path = "/changes?since=" + quote(str(since or ""), safe="") + f"&wait={int(wait)}"
+    body, error = _request(base, "GET", path, timeout=max(TIMEOUT, wait + 10))
+    if error:
+        return None, error
+    if not isinstance(body, dict) or "token" not in body:
+        return None, REASON_BROKEN
+    return body, None
 
 
 def put_settings(base, settings, saved_by):

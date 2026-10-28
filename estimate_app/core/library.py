@@ -36,6 +36,8 @@ mtime(`get_mtime`/`load_entry`가 기억)을 같이 보내고, 그 사이에 다
 삭제는 서버에서 '지움 표시'만 한다 — 관리자가 되살릴 수 있다.
 """
 
+import hashlib
+import json
 import os
 from datetime import datetime
 
@@ -54,6 +56,9 @@ SERVER_PREFIX = "srv:"
 # 서버 견적마다 마지막으로 본 mtime. 저장할 때 서버에 '이 값 그대로일 때만 덮어써라'로 보낸다.
 _SERVER_SEEN = {}
 _last_error = None
+_UNSET = object()
+# 내용 비교에서 뺄 칸 — 화면 표시용 배지라 같은 견적이라도 PC마다 다를 수 있다.
+_VOLATILE_KEYS = ("save_pending", "is_new_registration")
 
 
 def sanitize_title(title):
@@ -82,6 +87,29 @@ def belongs_to_location(path):
     서버 열쇠를 폴더 경로로(또는 그 반대로) 저장하려 들면 종료 때 자동 저장이 매번 실패한다.
     """
     return is_server_path(path) == datastore.location_is_server()
+
+
+def content_signature(items):
+    """카드 목록의 내용 지문(v1.4.0). 저장·불러오기 때의 지문과 지금 지문이 다르면 '서버에 아직
+    안 올린 변경이 있다'는 뜻이다 — 실시간 동기화가 자동으로 올릴지, 남의 변경을 자동으로
+    덮어 받아도 되는지를 이걸로 판단한다. 저장 대상(has_item_data)만 본다(save_entry와 같은 기준).
+    """
+    kept = [{k: v for k, v in item.items() if k not in _VOLATILE_KEYS}
+            for item in items if has_item_data(item)]
+    text = json.dumps(kept, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def peek_mtime(path):
+    """서버 견적의 지금 mtime을 (값, 오류)로 본다. get_mtime()과 달리 '마지막으로 본 값'
+    (_SERVER_SEEN)을 바꾸지 않는다 — 백그라운드 확인이 이 값을 바꿔 버리면, 화면이 아직 모르는
+    남의 저장 위에 자동 저장이 충돌 없이 덮어써진다."""
+    if not is_server_path(path) or not datastore.is_server():
+        return None, remote.REASON_MISSING
+    entry, error = remote.get_estimate(datastore.get_data_dir(), _server_title(path), meta_only=True)
+    if error:
+        return None, error
+    return entry.get("mtime"), None
 
 
 def get_last_error():
@@ -238,12 +266,16 @@ def _list_server_entries(base):
     return entries, None
 
 
-def _save_server_entry(kept, payload, path):
+def _save_server_entry(kept, payload, path, base_mtime=_UNSET):
     global _last_error
     if not datastore.is_server():
         _last_error = remote.REASON_MISSING
         return None
-    if path not in _SERVER_SEEN:
+    if base_mtime is not _UNSET:
+        # 실시간 동기화의 자동 저장. 화면이 알고 있는 값(library_current의 mtime)을 기준으로
+        # 보내서, 그 뒤에 남이 저장했으면 반드시 409가 나게 한다.
+        _SERVER_SEEN[path] = base_mtime
+    elif path not in _SERVER_SEEN:
         # 화면이 get_mtime()을 거치지 않고 바로 저장하는 경우. 지금 값을 기준으로 삼는다.
         get_mtime(path)
         if path not in _SERVER_SEEN:
@@ -261,11 +293,12 @@ def _save_server_entry(kept, payload, path):
     return {"path": path, "mtime": mtime, "count": len(kept)}
 
 
-def save_entry(title, items, path=None):
+def save_entry(title, items, path=None, base_mtime=_UNSET):
     """견적 한 건을 저장한다. 성공하면 {"path", "mtime", "count"}, 실패하면 None.
 
     덮어쓰기 여부·충돌 확인은 부르는 쪽(화면)이 먼저 끝낸 다음 이 함수를 부른다.
     실패 이유는 get_last_error()로 알 수 있다.
+    base_mtime(서버 모드만): 이 값일 때만 덮어쓴다. 생략하면 마지막으로 본 값을 쓴다.
     """
     global _last_error
     _last_error = None
@@ -284,7 +317,7 @@ def save_entry(title, items, path=None):
     }
     path = path or entry_path(name)
     if is_server_path(path):
-        return _save_server_entry(kept, payload, path)
+        return _save_server_entry(kept, payload, path, base_mtime)
     if not datastore.write_json_atomic(path, payload):
         _last_error = datastore.REASON_UNREACHABLE
         return None

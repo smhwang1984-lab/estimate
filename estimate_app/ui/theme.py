@@ -32,6 +32,8 @@ class Theme:
         self.normal = (family, fonts["normal_size"])
         self.bold = (family, fonts["normal_size"], "bold")
         self.small = (family, fonts["small_size"], "bold")
+        # v1.5.0: 상태 표시줄·안내문처럼 굵지 않은 작은 글씨.
+        self.small_plain = (family, fonts["small_size"])
         self.title = (family, fonts["title_size"], "bold")
         self.card_title = (family, fonts["card_title_size"], "bold")
 
@@ -103,22 +105,38 @@ class Theme:
         c = self.colors
         style.configure("TFrame", background=c["panel"])
         style.configure("TLabel", background=c["panel"], foreground=c["text"])
-        style.configure("TButton", padding=(12, 7), background=c["panel"], foreground=c["text"],
+        style.configure("TButton", padding=(10, 4), background=c["panel"], foreground=c["text"],
                         bordercolor=c["line"], focuscolor=c["accent"])
         style.map("TButton", background=[("active", c["panel_2"]), ("pressed", c["panel_2"])])
-        style.configure("Primary.TButton", padding=(12, 7), background=c["accent"], foreground=c["panel"],
+        style.configure("Primary.TButton", padding=(10, 4), background=c["accent"], foreground=c["panel"],
                         bordercolor=c["accent"], focuscolor=c["accent"])
         style.map("Primary.TButton", background=[("active", c["accent_2"]), ("pressed", c["accent_2"])],
                   foreground=[("active", c["panel"]), ("pressed", c["panel"])])
-        style.configure("Subtle.TButton", padding=(10, 7), background=c["panel"], foreground=c["muted"],
+        style.configure("Subtle.TButton", padding=(8, 4), background=c["panel"], foreground=c["muted"],
                         bordercolor=c["panel"], focuscolor=c["accent"])
         style.map("Subtle.TButton", background=[("active", c["panel_2"]), ("pressed", c["panel_2"])],
                   foreground=[("active", c["text"]), ("pressed", c["text"])])
-        style.configure("Danger.TButton", padding=(12, 7), background=c["danger_bg"], foreground=c["danger_fg"],
+        style.configure("Danger.TButton", padding=(10, 4), background=c["danger_bg"], foreground=c["danger_fg"],
                         bordercolor=c["danger_bg"], focuscolor=c["danger_fg"])
         style.map("Danger.TButton", background=[("active", c["danger_fg"]), ("pressed", c["danger_fg"])],
                   foreground=[("active", c["panel"]), ("pressed", c["panel"])])
-        style.configure("TEntry", padding=5, fieldbackground=c["card_alt"], foreground=c["text"],
+        # v1.5.0: 윈도우 도구 모음처럼 평평한 단추. 눌러 보기 전에는 테두리 없이 글자만 보이고,
+        # 올려 보면 배경이 들어온다(엑셀 리본·탐색기 도구 모음과 같은 방식).
+        flat = dict(padding=(9, 3), relief="flat", borderwidth=0)
+        style.configure("Tool.TButton", background=c["panel"], foreground=c["text"],
+                        bordercolor=c["panel"], focuscolor=c["panel"], **flat)
+        style.map("Tool.TButton", background=[("active", c["panel_2"]), ("pressed", c["line"])])
+        style.configure("ToolPrimary.TButton", background=c["accent"], foreground=c["panel"],
+                        bordercolor=c["accent"], focuscolor=c["accent"], **flat)
+        style.map("ToolPrimary.TButton", background=[("active", c["accent_2"]), ("pressed", c["accent_2"])],
+                  foreground=[("active", c["panel"]), ("pressed", c["panel"])])
+        style.configure("ToolDanger.TButton", background=c["panel"], foreground=c["danger_fg"],
+                        bordercolor=c["panel"], focuscolor=c["panel"], **flat)
+        style.map("ToolDanger.TButton", background=[("active", c["danger_bg"]), ("pressed", c["danger_bg"])])
+        style.configure("Strip.TButton", padding=(8, 1), background=c["panel"], foreground=c["text"],
+                        bordercolor=c["line"], focuscolor=c["panel"])
+        style.map("Strip.TButton", background=[("active", c["panel_2"]), ("pressed", c["panel_2"])])
+        style.configure("TEntry", padding=4, fieldbackground=c["card_alt"], foreground=c["text"],
                         insertcolor=c["text"], bordercolor=c["line"])
         style.configure("TCombobox", padding=5, fieldbackground=c["card_alt"], background=c["card_alt"],
                         foreground=c["text"], arrowcolor=c["accent_2"], bordercolor=c["line"])
@@ -135,16 +153,16 @@ class Theme:
         # 설정창 탭(v0.0.9). clam 기본값은 회색 계열이라 밝은 팔레트에서 탭이 배경에 묻힌다.
         style.configure("TNotebook", background=c["panel"], bordercolor=c["line"], tabmargins=(4, 6, 4, 0))
         style.configure("TNotebook.Tab", background=c["panel_2"], foreground=c["muted"],
-                        padding=(16, 8), bordercolor=c["line"])
+                        padding=(14, 6), bordercolor=c["line"])
         style.map("TNotebook.Tab",
                   background=[("selected", c["panel"])],
                   foreground=[("selected", c["accent_2"])])
         style.configure("Treeview", background=c["card_alt"], fieldbackground=c["card_alt"],
-                        foreground=c["text"], bordercolor=c["line"], rowheight=30)
+                        foreground=c["text"], bordercolor=c["line"], rowheight=26)
         style.map("Treeview", background=[("selected", c["accent"])],
                   foreground=[("selected", c["panel"])])
         style.configure("Treeview.Heading", background=c["panel_2"], foreground=c["text"],
-                        bordercolor=c["line"], padding=(10, 7), font=self.bold)
+                        bordercolor=c["line"], padding=(8, 5), font=self.bold)
         style.map("Treeview.Heading", background=[("active", c["panel_2"])])
         style.configure("TLabelframe", background=c["panel"], foreground=c["text"], bordercolor=c["line"])
         style.configure("TLabelframe.Label", background=c["panel"], foreground=c["accent_2"], font=self.bold)

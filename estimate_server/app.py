@@ -12,6 +12,18 @@
 - 컨테이너는 host 네트워크로 띄운다. bridge+ports로 띄우면 Docker가 접속 IP를
   게이트웨이 주소(172.x)로 바꿔 버려 이 판정이 무력해진다(TSERP 3.9.3 교훈).
 
+## 변경 알림 — /changes (v1.1.0, 롱폴링)
+
+클라이언트는 `/changes?since=<token>&wait=25`를 걸어 두고, 서버는 데이터가 바뀌는 순간
+(설정·견적 저장, 견적 삭제) 응답한다. 안 바뀌면 wait초 뒤 같은 token으로 답한다.
+몇 초마다 묻는 방식보다 반영이 빠르고(즉시) 요청 수도 적다(PC당 25초에 한 번).
+
+- 기다리는 요청은 스레드 하나씩을 붙잡는다(FastAPI 동기 함수 = 스레드풀). 그래서 동시에
+  기다리는 수를 MAX_WAITERS로 묶고, 넘치면 기다리지 않고 바로 답한다(클라이언트가 잠깐
+  쉬었다 다시 묻는다 — 폴링으로 내려앉을 뿐 멈추지 않는다).
+- 알림은 이 프로세스 안의 Condition으로 전한다. uvicorn worker를 여러 개 띄우면 다른
+  worker의 저장을 못 듣는다 — Dockerfile의 CMD에 --workers를 붙이지 말 것.
+
 ## 응답 형식
 
 정상은 200, 실패는 상태 코드 + {"ok": false, "reason": ...}.
@@ -19,6 +31,7 @@
 """
 
 import ipaddress
+import threading
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -30,6 +43,17 @@ from . import backup, config, store
 
 _ALLOWED = config.allowed_networks()
 _STATE = {"db_ok": False, "error": ""}
+
+MAX_WAIT_SECONDS = 25
+MAX_WAITERS = 16
+_change_cond = threading.Condition()
+_change = {"seq": 0, "waiters": 0}
+
+
+def _notify_change():
+    with _change_cond:
+        _change["seq"] += 1
+        _change_cond.notify_all()
 
 
 @asynccontextmanager
@@ -121,6 +145,7 @@ def put_settings(body: SettingsBody, request: Request):
     if not _db_ready():
         return _fail(503, "server_error", "서버 DB를 사용할 수 없습니다.")
     mtime = store.put_settings(body.settings, body.saved_by, _client_ip(request))
+    _notify_change()
     return {"ok": True, "mtime": mtime}
 
 
@@ -156,6 +181,7 @@ def put_estimate(title: str, body: EstimateBody, request: Request):
                                    body.saved_by, _client_ip(request))
     except store.ConflictError as exc:
         return _fail(409, "conflict", "다른 곳에서 먼저 저장했습니다.", mtime=exc.current_mtime)
+    _notify_change()
     return {"ok": True, **entry}
 
 
@@ -168,4 +194,27 @@ def delete_estimate(title: str, request: Request, by: str = ""):
         return _fail(400, "bad_title", "견적 이름이 올바르지 않습니다.")
     if not store.delete_estimate(clean, by[:200], _client_ip(request)):
         return _fail(404, "missing", "견적이 없습니다.")
+    _notify_change()
     return {"ok": True}
+
+
+@app.get("/changes")
+def changes(since: str = "", wait: float = 0):
+    """지금 변경 표시를 돌려준다. since가 지금 값과 같으면 바뀔 때까지(최대 wait초) 기다린다."""
+    if not _db_ready():
+        return _fail(503, "server_error", "서버 DB를 사용할 수 없습니다.")
+    with _change_cond:
+        seq = _change["seq"]
+    current = store.change_state()
+    if since and current["token"] == since and wait > 0:
+        with _change_cond:
+            if _change["waiters"] < MAX_WAITERS:
+                _change["waiters"] += 1
+                try:
+                    # seq를 먼저 잡아 두었으므로, 상태를 읽은 직후 끼어든 변경도 놓치지 않는다.
+                    _change_cond.wait_for(lambda: _change["seq"] != seq,
+                                          timeout=min(float(wait), MAX_WAIT_SECONDS))
+                finally:
+                    _change["waiters"] -= 1
+        current = store.change_state()
+    return {"ok": True, **current}

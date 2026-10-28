@@ -233,10 +233,11 @@ def open_library_dialog(app, mode="load"):
                     f"견적을 저장하지 못했습니다.\n{path}\n\n"
                     f"데이터 위치 설정과 폴더 권한을 확인해 주세요.", parent=dialog)
             return
-        app.library_current = {"title": title, "path": result["path"], "mtime": result["mtime"]}
+        app.set_library_current({"title": title, "path": result["path"], "mtime": result["mtime"]})
+        app.sync.conflict = False  # 직접 저장했으면 엇갈림은 사용자가 정리한 것이다
         # 세션에도 바로 남긴다 -- 저장 직후 프로그램을 끄면 이 참조가 사라져, 다음에 켰을 때
         # 덮어쓰기 충돌 판정의 기준점을 잃는다.
-        app.save_session()
+        app.save_session(sync=False)
         messagebox.showinfo("저장 완료",
                             f"'{title}' {result['count']}건을 저장했습니다.\n\n{result['path']}",
                             parent=dialog)
@@ -260,7 +261,8 @@ def open_library_dialog(app, mode="load"):
             messagebox.showerror("삭제 오류", f"파일을 지우지 못했습니다.\n{entry['path']}", parent=dialog)
             return
         if (app.library_current or {}).get("path") == entry["path"]:
-            app.library_current = None
+            app.set_library_current(None)
+            app.save_session(sync=False)
         refresh_list()
 
     def do_upload():
@@ -319,6 +321,8 @@ def open_library_dialog(app, mode="load"):
               style="Muted.TLabel").pack(anchor="w", pady=(10, 0))
 
     refresh_list()
+    # v1.4.0: 실시간 동기화가 다른 PC의 저장·삭제를 알면 목록을 다시 읽게 한다.
+    dialog.sync_refresh = lambda: refresh_list()
     # 저장으로 열었으면 이름 칸에, 불러오기로 열었으면 목록에 포커스를 준다.
     if mode == "save":
         default_title = (app.library_current or {}).get("title") \

@@ -50,6 +50,11 @@ from .config import DEFAULT_RATES
 
 SETTINGS_FILE = "settings.json"
 
+# v1.4.0: 서버 모드에서 마지막으로 읽었거나 저장한 설정의 서버 mtime. 실시간 동기화(ui/sync.py)가
+# 서버의 mtime과 비교해 "다른 PC가 바꿨는가"를 판단한다. 내가 저장한 것은 여기 먼저 적어 두므로
+# 내 저장을 남의 변경으로 착각하지 않는다.
+_loaded_mtime = None
+
 # 마지막 load()가 '경로에 못 닿아' 기본값을 돌려줬는가. 여기 값이 남아 있는 동안은
 # save()가 거부한다 — 읽지 못한 값을 되쓰면 공유 파일이 기본값으로 날아간다.
 _load_error = None
@@ -244,14 +249,41 @@ def _read_payload():
 
     v1.3.0: 데이터 위치가 서버면 파일 대신 서버에서 읽는다. 오류 문자열은 datastore와 같다.
     """
+    global _loaded_mtime
     if datastore.is_server():
-        return remote.get_settings(datastore.get_data_dir())
+        body, error = remote.fetch_settings(datastore.get_data_dir())
+        if body:
+            _loaded_mtime = body.get("mtime")
+            return body["settings"], None
+        if error == datastore.REASON_MISSING:
+            _loaded_mtime = 0
+        return None, error
     return datastore.read_json(get_settings_path())
 
 
+def get_loaded_mtime():
+    """마지막으로 읽었거나 저장한 서버 설정의 mtime. 폴더 모드거나 아직 못 읽었으면 None."""
+    return _loaded_mtime
+
+
+def fetch_server_meta():
+    """서버 설정의 지금 mtime·저장자·시각. 설정창 저장 직전 충돌 확인용(v1.4.0). 실패하면 None."""
+    if not datastore.is_server():
+        return None
+    body, error = remote.fetch_settings(datastore.get_data_dir())
+    if error == datastore.REASON_MISSING:
+        return {"mtime": 0, "updated_by": "", "updated_at": ""}
+    if error:
+        return None
+    return {key: body.get(key) for key in ("mtime", "updated_by", "updated_at")}
+
+
 def _write_payload(payload):
+    global _loaded_mtime
     if datastore.is_server():
-        _mtime, error = remote.put_settings(datastore.get_data_dir(), payload, _who())
+        mtime, error = remote.put_settings(datastore.get_data_dir(), payload, _who())
+        if error is None:
+            _loaded_mtime = mtime
         return error is None
     return datastore.write_json_atomic(get_settings_path(), payload)
 

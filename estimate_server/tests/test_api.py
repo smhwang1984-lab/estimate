@@ -175,3 +175,58 @@ def test_backup_snapshot_and_prune(client, data_dir, monkeypatch):
     os.utime(old, (past, past))
     backup.prune(config.backup_dir())
     assert not os.path.exists(old) and os.path.exists(path)
+
+
+# ---------- 변경 알림 /changes (v1.1.0) ----------
+
+def test_changes_token_moves_on_every_write(client):
+    t0 = client.get("/changes").json()["token"]
+    client.put("/settings", json={"settings": {"a": 1}})
+    t1 = client.get("/changes").json()["token"]
+    client.put(url("알림"), json={"payload": payload(), "base_mtime": None})
+    t2 = client.get("/changes").json()
+    assert len({t0, t1, t2["token"]}) == 3 and t2["library_rev"] == 1
+    client.delete(url("알림"))
+    assert client.get("/changes").json()["library_rev"] == 2
+    # 실패한 저장(409)·없는 견적 삭제는 표시를 바꾸지 않는다
+    client.put(url("알림2"), json={"payload": payload(), "base_mtime": 999})
+    client.delete(url("없음"))
+    assert client.get("/changes").json()["library_rev"] == 2
+
+
+def test_changes_returns_immediately_when_token_differs(client):
+    start = time.time()
+    body = client.get("/changes?since=old&wait=10").json()
+    assert body["ok"] and time.time() - start < 2
+
+
+def test_changes_times_out_with_same_token(client):
+    token = client.get("/changes").json()["token"]
+    start = time.time()
+    body = client.get(f"/changes?since={token}&wait=1").json()
+    assert body["token"] == token and 0.8 < time.time() - start < 5
+
+
+def test_changes_wakes_up_on_write(data_dir):
+    import threading
+    with make_client() as waiter, make_client() as writer:
+        token = waiter.get("/changes").json()["token"]
+        result = {}
+
+        def wait():
+            start = time.time()
+            result["body"] = waiter.get(f"/changes?since={token}&wait=20").json()
+            result["elapsed"] = time.time() - start
+
+        thread = threading.Thread(target=wait)
+        thread.start()
+        time.sleep(0.5)
+        writer.put("/settings", json={"settings": {"rates": {"x": 1}}})
+        thread.join(10)
+        assert result["body"]["token"] != token
+        assert result["elapsed"] < 5  # 20초를 다 기다리지 않고 저장 직후 깨어난다
+
+
+def test_changes_blocked_outside_lan(data_dir):
+    with make_client(("8.8.8.8", 1)) as c:
+        assert c.get("/changes").status_code == 403

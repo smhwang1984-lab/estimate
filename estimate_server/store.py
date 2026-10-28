@@ -13,6 +13,13 @@
 같을 때만 받는다. 다르면 ConflictError — 판정과 쓰기를 `BEGIN IMMEDIATE` 한 트랜잭션에서
 해서, 두 PC가 동시에 저장해도 둘 다 통과하는 일이 없다.
 
+## 변경 알림(v1.1.0)
+
+`meta.library_rev`는 보관함에 무엇이든 쓰일 때마다(저장·삭제) 1씩 오른다. 설정의 mtime과
+합쳐 `change_state()`의 token이 된다 — 클라이언트는 이 token이 바뀌었는지만 보고
+"무엇이 바뀌었는지"는 설정 mtime·자기 견적의 mtime으로 따로 확인한다. DB에서 계산하므로
+서버를 재시작해도 값이 이어진다.
+
 ## 삭제
 
 지우지 않고 `deleted_at`만 적는다. 공유 보관함에서 남이 지운 견적을 서버 관리자가
@@ -85,6 +92,23 @@ def init_db():
         """)
         conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
                      (str(SCHEMA_VERSION),))
+        conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('library_rev', '0')")
+
+
+def _bump_library_rev(conn):
+    conn.execute("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)"
+                 " WHERE key = 'library_rev'")
+
+
+def change_state():
+    """지금 데이터의 변경 표시. 무엇이든 바뀌면 token이 달라진다."""
+    with closing(connect()) as conn:
+        row = conn.execute("SELECT mtime FROM settings WHERE id = 1").fetchone()
+        rev = conn.execute("SELECT value FROM meta WHERE key = 'library_rev'").fetchone()
+    settings_mtime = row["mtime"] if row else 0
+    library_rev = int(rev["value"]) if rev else 0
+    return {"token": f"{settings_mtime}-{library_rev}",
+            "settings_mtime": settings_mtime, "library_rev": library_rev}
 
 
 def check_db():
@@ -196,6 +220,7 @@ def put_estimate(title, payload, base_mtime, saved_by, ip):
                 " saved_by = ?, app_version = ?, ip = ?, deleted_at = NULL, deleted_by = ''"
                 " WHERE title = ?",
                 (text, len(items), mtime, saved_at, saved_by, app_version, ip, title))
+        _bump_library_rev(conn)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -208,9 +233,20 @@ def put_estimate(title, payload, base_mtime, saved_by, ip):
 
 def delete_estimate(title, deleted_by, ip):
     """소프트 삭제. 지운 게 있으면 True."""
-    with closing(connect()) as conn:
+    conn = connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
         cursor = conn.execute(
             "UPDATE estimates SET deleted_at = ?, deleted_by = ?"
             " WHERE title = ? AND deleted_at IS NULL",
             (_now_text(), f"{deleted_by} ({ip})", title))
-        return cursor.rowcount > 0
+        deleted = cursor.rowcount > 0
+        if deleted:
+            _bump_library_rev(conn)
+        conn.execute("COMMIT")
+        return deleted
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()

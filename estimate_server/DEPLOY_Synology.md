@@ -6,7 +6,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 서버 버전 / API 버전 | 1.0.0 / 1 |
+| 서버 버전 / API 버전 | 1.1.0 / 1 |
 | NAS 폴더 | `/volume1/docker/estimate_server` |
 | 포트 | 8100 (TSERP는 8000) |
 | 컨테이너 이름 | `estimate-api` |
@@ -28,7 +28,7 @@
 
 ### 1-2. 서버 파일 올리기
 
-`estimate_server_v1.0.0.zip`을 `/volume1/docker/estimate_server/`에 푼다. 결과:
+`estimate_server_v1.1.0.zip`을 `/volume1/docker/estimate_server/`에 푼다. 결과:
 
 ```
 estimate_server/
@@ -78,7 +78,7 @@ http://<NAS IP>:8100/health
 
 정상이면:
 ```json
-{"ok":true,"server_version":"1.0.0","api_version":1,"db_ok":true,"error":""}
+{"ok":true,"server_version":"1.1.0","api_version":1,"db_ok":true,"error":""}
 ```
 
 | 보이는 것 | 뜻 |
@@ -157,3 +157,15 @@ sudo docker exec estimate-api python -c "import sqlite3; c=sqlite3.connect('/dat
 
 API 버전(`api_version`)이 바뀌는 업데이트면 프로그램도 같이 올려야 한다 — 맞지 않는 버전은
 프로그램이 "서버 버전이 맞지 않습니다"라고 알리고 서버를 쓰지 않는다.
+
+### 1.0.0 → 1.1.0 (실시간 동기화, 프로그램 v1.4.0과 짝)
+
+- 추가: `GET /changes` — 프로그램이 걸어 두면 누가 저장·삭제하는 순간 응답한다(롱폴링).
+  API 버전은 그대로 1이라 v1.3.0 프로그램도 계속 쓸 수 있다(동기화만 안 될 뿐).
+- DB는 그대로 쓴다. 처음 뜰 때 `meta` 표에 `library_rev` 한 줄만 더한다(데이터 변환 없음).
+- **uvicorn worker는 1개여야 한다.** 변경 알림을 프로세스 안에서 전하므로, `--workers`를
+  붙이면 다른 worker의 저장을 듣지 못해 동기화가 늦어진다. 기본 Dockerfile 그대로면 1개다.
+- PC 한 대가 연결 하나를 계속 붙잡고 있는다(25초마다 새로 건다). 동시 대기는 16개까지 받고,
+  넘치면 기다리지 않고 바로 답한다 — 그 PC들은 몇 초 간격 확인으로 내려앉을 뿐 멈추지 않는다.
+- 업데이트 후 확인: `/health`의 `server_version`이 `1.1.0`이고, 브라우저에서
+  `http://<NAS>:8100/changes`를 열면 `{"ok":true,"token":"…",…}`가 나온다.

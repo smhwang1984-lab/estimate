@@ -61,44 +61,46 @@ DEFAULT_THEME_MODE = "light"
 
 DEFAULT_FONTS = {
     "family": "맑은 고딕",
-    "normal_size": 13,
-    "small_size": 11,
-    "title_size": 21,
-    "card_title_size": 17,
+    "normal_size": 10,
+    "small_size": 9,
+    "title_size": 16,
+    "card_title_size": 13,
     # v0.0.8: 표 본문은 일반 글꼴로 바꿨다(고정폭은 품번/품명/소재가 부자연스럽게 벌어짐).
     # num_family는 금액·수량처럼 자릿수를 맞춰야 하는 열에만 따로 적용한다.
     "table_family": "맑은 고딕",
     "num_family": "Consolas",
-    "table_head_px": 18,
-    "table_cell_px": 17,
-    "table_sub_px": 13,
+    "table_head_px": 14,
+    "table_cell_px": 14,
+    "table_sub_px": 12,
     "pane_head_px": 12,
-    "badge_px": 14,
+    "badge_px": 12,
 }
 
 DEFAULT_LAYOUT = {
-    "window_size": "1460x780",
-    "min_width": 1420,
-    "min_height": 680,
-    "checkbox_size": 26,
+    "window_size": "1400x800",
+    "min_width": 1000,
+    "min_height": 560,
+    "checkbox_size": 22,
     "page_size": 40,
     "cell_pad_x": 8,
     "cell_pad_y": 6,
     # v0.0.9: 맨 앞 No 열과 Comment 열이 늘어난 만큼(요청 1-3, 1-4) 나머지 열을 조금씩 줄였다.
-    "col_no_width": 46,
-    "col_check_width": 50,
-    "col_model_width": 120,
-    "col_partno_width": 180,
-    "col_partname_width": 220,
-    "col_comment_width": 170,
+    "col_no_width": 44,
+    "col_check_width": 40,
+    "col_model_width": 100,
+    "col_partno_width": 150,
+    "col_partname_width": 200,
+    "col_comment_width": 150,
     # v0.1.0: 소재 칸이 좁아 기본 소재 목록 대부분이 잘렸다(요청 3-4). 30px 넓히고,
     # 여유가 있던 금액 칸에서 같은 만큼 덜어 전체 폭 합계는 그대로 뒀다(1억 단위까지도
     # 120px에 들어가는 것을 실측해 확인함).
-    "col_material_width": 150,
-    "col_heat_width": 100,
-    "col_size_width": 150,
-    "col_status_width": 100,
-    "col_price_width": 120,
+    "col_material_width": 120,
+    "col_heat_width": 80,
+    "col_size_width": 130,
+    # v1.5.0: 등록일은 품번 아래 작은 글씨 대신 자기 열을 갖는다(엑셀식 한 줄 행).
+    "col_date_width": 104,
+    "col_status_width": 90,
+    "col_price_width": 110,
 }
 
 DEFAULT_RATES = {

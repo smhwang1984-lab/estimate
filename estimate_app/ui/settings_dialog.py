@@ -404,8 +404,9 @@ def _build_location_tab(notebook, app, dialog):
             refresh_status()
             return
         app.apply_settings(result["settings"])
-        app.library_current = None  # 폴더가 바뀌면 보관함도 다른 곳을 본다
-        app.save_session()          # 옛 폴더의 견적을 가리키는 참조가 세션에 남지 않게
+        app.set_library_current(None)  # 폴더가 바뀌면 보관함도 다른 곳을 본다
+        app.save_session(sync=False)   # 옛 폴더의 견적을 가리키는 참조가 세션에 남지 않게
+        app.sync.restart()             # v1.4.0: 새 위치가 서버면 실시간 동기화를 다시 건다
         action_text = (_SERVER_ACTION if is_server else _LOCATION_ACTION)[result["action"]]
         messagebox.showinfo("데이터 위치 변경",
                             f"{action_text}\n\n"
@@ -513,6 +514,9 @@ def open_settings_dialog(app):
         return False
 
     current = app.settings
+    # v1.4.0(A): 이 창을 열 때의 서버 설정 mtime. 저장 직전에 서버 값과 비교해, 그사이 다른 PC가
+    # 저장했으면 덮어쓰기 전에 묻는다.
+    opened_mtime = settings_store.get_loaded_mtime()
     dialog = tk.Toplevel(app.root)
     app.settings_window = dialog
     dialog.title("설정")
@@ -857,7 +861,20 @@ def open_settings_dialog(app):
             "lathe_materials": get_lathe_materials(),
             "mill_materials": get_mill_materials(),
         }
-        if not settings_store.save(payload):
+        if opened_mtime is not None and datastore.is_server():
+            meta = settings_store.fetch_server_meta()
+            if meta is not None and (meta.get("mtime") or 0) != (opened_mtime or 0):
+                who = meta.get("updated_by") or "다른 PC"
+                when = meta.get("updated_at") or ""
+                if not messagebox.askyesno(
+                        "다른 PC가 먼저 저장함",
+                        f"이 창을 연 뒤 {who}에서 설정을 저장했습니다({when}).\n\n"
+                        "지금 저장하면 그 변경(단가·소재 등)이 이 창의 값으로 덮어써집니다.\n"
+                        "[아니요]를 누르면 저장하지 않고 창을 닫습니다 — 다시 열면 최신 값이 보입니다.\n\n"
+                        "그래도 이 창의 값으로 저장할까요?",
+                        default="no", parent=dialog):
+                    dialog.destroy()
+                    return
             # v0.1.4: 공유 폴더를 못 읽은 상태에서는 save()가 일부러 거부한다.
             # 그 경우와 진짜 쓰기 실패를 구분해서 알린다.
             error = settings_store.get_load_error()
