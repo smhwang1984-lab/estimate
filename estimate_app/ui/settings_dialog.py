@@ -16,7 +16,7 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from ..core import config, datastore, display_prefs as display_prefs_store, settings as settings_store
+from ..core import config, datastore, display_prefs as display_prefs_store, remote, settings as settings_store
 from ..core.model import parse_number
 
 # 데이터 위치 변경 결과를 사람이 읽는 문장으로. 어느 쪽 설정이 이겼는지 반드시 알린다 --
@@ -32,6 +32,22 @@ _LOCATION_ERROR = {
     datastore.REASON_UNREACHABLE: "그 폴더에 연결하지 못했습니다. 네트워크 연결과 경로를 확인해 주세요.",
     datastore.REASON_READONLY: "그 폴더에 쓸 수 없습니다. 폴더 권한을 확인해 주세요.",
     "broken": "그 폴더의 settings.json을 읽을 수 없습니다. 파일이 깨졌을 수 있습니다.",
+    "location_write_failed": "설정 위치를 기록하지 못했습니다.",
+}
+# v1.3.0: 견적 서버로 옮길 때의 문장. 폴더용 문장을 그대로 쓰면 "폴더가 비어 있어"처럼 엉뚱하게 읽힌다.
+_SERVER_ACTION = {
+    "adopted": "서버에 이미 있던 설정을 가져왔습니다. 이 PC에서 쓰던 값 대신 서버의 값이 적용됩니다.",
+    "copied": "서버에 설정이 없어 이 PC에서 쓰던 설정을 서버로 올렸습니다.",
+    "fresh": "서버에 설정이 없지만, 직전에 설정을 읽지 못한 상태라 올리지 않았습니다."
+             " 기본값으로 시작하니 단가와 소재 목록을 확인해 주세요.",
+}
+_SERVER_ERROR = {
+    remote.REASON_UNREACHABLE: "서버에 연결하지 못했습니다. 주소·포트와 서버(NAS) 상태를 확인해 주세요.",
+    remote.REASON_MISSING: "그 주소에 견적 서버가 없습니다. 주소·포트를 확인해 주세요.",
+    remote.REASON_FORBIDDEN: "서버가 접속을 거부했습니다. 견적 서버는 사내망에서만 쓸 수 있습니다.",
+    remote.REASON_INCOMPATIBLE: "서버 버전이 이 프로그램과 맞지 않습니다. 프로그램을 업데이트해 주세요.",
+    remote.REASON_SERVER_ERROR: "서버에 문제가 있습니다(서버 DB 오류). 서버 관리자에게 알려 주세요.",
+    remote.REASON_BROKEN: "서버의 응답을 읽을 수 없습니다. 견적 서버 주소가 맞는지 확인해 주세요.",
     "location_write_failed": "설정 위치를 기록하지 못했습니다.",
 }
 
@@ -335,6 +351,7 @@ def _build_location_tab(notebook, app, dialog):
 
     status_var = tk.StringVar()
     path_var = tk.StringVar()
+    server_var = tk.StringVar()
 
     box = ttk.LabelFrame(tab, text="현재 위치", padding=12)
     box.pack(fill=tk.X)
@@ -355,18 +372,28 @@ def _build_location_tab(notebook, app, dialog):
     def refresh_status():
         state = datastore.get_state(recheck=True)
         location = datastore.load_location()
-        lines = [f"폴더: {state['dir']}", f"상태: {datastore.describe(state)}"]
+        where = "서버" if state.get("server") else "폴더"
+        lines = [f"{where}: {state['dir']}", f"상태: {datastore.describe(state)}"]
         error = settings_store.get_load_error()
         if error:
             lines.append("설정 파일을 읽지 못해 지금은 기본값이 보입니다."
                          " 이 상태에서는 설정을 저장하지 않습니다(공유 파일이 기본값으로"
                          " 덮어써지는 것을 막기 위해서입니다).")
         status_var.set("\n".join(lines))
-        if location["path"] and not path_var.get().strip():
+        if remote.is_server_url(location["path"]):
+            if not server_var.get().strip():
+                server_var.set(location["path"])
+        elif location["path"] and not path_var.get().strip():
             path_var.set(location["path"])
 
     def apply_location(path, enabled):
+        is_server = remote.is_server_url(path)
         result = settings_store.relocate(path, enabled)
+        if not result["ok"] and is_server:
+            detail = _SERVER_ERROR.get(result["reason"], "서버를 사용할 수 없습니다.")
+            messagebox.showerror("데이터 위치 변경 실패", f"{detail}\n\n{path}", parent=dialog)
+            refresh_status()
+            return
         if not result["ok"]:
             detail = _LOCATION_ERROR.get(result["reason"], "폴더를 사용할 수 없습니다.")
             # 네트워크 경로는 '폴더가 없다'와 '서버에 못 닿는다'가 겉으로 똑같이 보인다
@@ -379,9 +406,10 @@ def _build_location_tab(notebook, app, dialog):
         app.apply_settings(result["settings"])
         app.library_current = None  # 폴더가 바뀌면 보관함도 다른 곳을 본다
         app.save_session()          # 옛 폴더의 견적을 가리키는 참조가 세션에 남지 않게
+        action_text = (_SERVER_ACTION if is_server else _LOCATION_ACTION)[result["action"]]
         messagebox.showinfo("데이터 위치 변경",
-                            f"{_LOCATION_ACTION[result['action']]}\n\n"
-                            f"폴더: {datastore.get_data_dir()}\n\n"
+                            f"{action_text}\n\n"
+                            f"{'서버' if is_server else '폴더'}: {datastore.get_data_dir()}\n\n"
                             f"설정창을 닫습니다. 바뀐 값을 보려면 다시 열어 주세요.",
                             parent=dialog)
         dialog.destroy()
@@ -391,7 +419,39 @@ def _build_location_tab(notebook, app, dialog):
         if not path:
             messagebox.showinfo("경로 없음", "사용할 폴더를 고르거나 경로를 적어 주세요.", parent=dialog)
             return
+        if remote.is_server_url(path):
+            messagebox.showinfo("서버 주소", "서버 주소는 아래 [견적 서버 지정]에 적어 주세요.", parent=dialog)
+            return
         apply_location(path, True)
+
+    def _server_url():
+        url = remote.normalize_url(server_var.get())
+        if not url:
+            messagebox.showinfo("주소 없음", "견적 서버 주소를 적어 주세요. 예: 192.168.0.10:8100", parent=dialog)
+            return ""
+        server_var.set(url)
+        return url
+
+    def check_server():
+        url = _server_url()
+        if not url:
+            return
+        dialog.configure(cursor="watch")
+        dialog.update_idletasks()
+        try:
+            reason = datastore.probe(url)
+        finally:
+            dialog.configure(cursor="")
+        if reason:
+            messagebox.showerror("연결 확인", f"{_SERVER_ERROR.get(reason, '서버를 사용할 수 없습니다.')}\n\n{url}",
+                                 parent=dialog)
+        else:
+            messagebox.showinfo("연결 확인", f"견적 서버에 정상적으로 연결됩니다.\n\n{url}", parent=dialog)
+
+    def use_server():
+        url = _server_url()
+        if url:
+            apply_location(url, True)
 
     def use_local():
         if not datastore.is_shared():
@@ -400,8 +460,8 @@ def _build_location_tab(notebook, app, dialog):
         if not messagebox.askyesno(
                 "로컬로 되돌리기",
                 "이 PC의 기본 폴더(%LOCALAPPDATA%\\MachineEstimate)로 되돌립니다.\n\n"
-                "공유 폴더의 파일은 지우지 않습니다. 다만 이 PC의 단가·소재 설정은"
-                " 공유 폴더로 옮기기 전 값으로 돌아갑니다. 계속할까요?",
+                "공유 폴더·서버의 데이터는 지우지 않습니다. 다만 이 PC의 단가·소재 설정은"
+                " 공유 위치로 옮기기 전 값으로 돌아갑니다. 계속할까요?",
                 default="no", parent=dialog):
             return
         apply_location("", False)
@@ -411,6 +471,20 @@ def _build_location_tab(notebook, app, dialog):
     ttk.Button(buttons, text="이 폴더 사용", command=use_shared).pack(side=tk.LEFT)
     ttk.Button(buttons, text="다시 확인", command=refresh_status).pack(side=tk.LEFT, padx=8)
     ttk.Button(buttons, text="이 PC에만 저장(기본값)", command=use_local).pack(side=tk.LEFT)
+
+    # v1.3.0: 견적 서버(NAS의 estimate_server 컨테이너). 폴더 대신 서버 주소를 위치로 쓴다.
+    # 폴더 버튼 줄 아래에 둔다 — 위에 끼우면 [이 폴더 사용]이 서버 칸의 버튼처럼 읽힌다.
+    server_box = ttk.LabelFrame(tab, text="견적 서버 지정", padding=12)
+    server_box.pack(fill=tk.X, pady=(18, 0))
+    server_row = ttk.Frame(server_box)
+    server_row.pack(fill=tk.X)
+    ttk.Entry(server_row, textvariable=server_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+    ttk.Button(server_row, text="연결 확인", command=check_server).pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Button(server_row, text="이 서버 사용", command=use_server).pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Label(server_box, style="Muted.TLabel", wraplength=720, justify="left",
+              text="NAS 주소와 포트를 적습니다(예: 192.168.0.10:8100). 사내망에서만 연결됩니다."
+                   " 예전 견적은 서버로 옮긴 뒤 [견적 불러오기 > 폴더에서 서버로 올리기]로 옮길 수 있습니다."
+              ).pack(anchor="w", pady=(10, 0))
 
     ttk.Label(tab, style="Muted.TLabel", wraplength=760, justify="left",
               text="작업 중인 카드 목록(자동 저장)과 업데이트 기록은 공유하지 않고 PC마다 따로 둡니다."
@@ -703,8 +777,13 @@ def open_settings_dialog(app):
     ttk.Button(reset_row, text="열 제목 기본값", command=reset_headers).pack(side=tk.LEFT, padx=(0, 6))
     ttk.Button(reset_row, text="열 폭 기본값", command=reset_widths).pack(side=tk.LEFT, padx=6)
     ttk.Button(reset_row, text="열 제목·폭 모두 기본값", command=lambda: (reset_headers(), reset_widths())).pack(side=tk.LEFT, padx=6)
+    if datastore.is_server():
+        width_hint = "열 폭·제목은 견적 서버에 저장되어 모든 PC에 함께 적용됩니다. 위 [기본값] 버튼으로 되돌릴 수 있습니다."
+    else:
+        width_hint = (f"열 폭이 망가져 설정 버튼을 누르기 어렵다면 {settings_store.get_settings_path()}"
+                      " 파일을 삭제하면 기본값으로 복구됩니다.")
     ttk.Label(column_tab,
-              text=f"열 폭이 망가져 설정 버튼을 누르기 어렵다면 {settings_store.get_settings_path()} 파일을 삭제하면 기본값으로 복구됩니다.",
+              text=width_hint,
               style="Muted.TLabel", wraplength=820, justify="left").pack(anchor="w", pady=(12, 0))
     # ---------- 6) 화면 표시 (v0.1.8) ----------
     # 이 탭도 '저장' 버튼과 무관하게 즉시 적용된다. 다만 데이터 위치 탭과 달리 다른 값을
@@ -782,19 +861,23 @@ def open_settings_dialog(app):
             # v0.1.4: 공유 폴더를 못 읽은 상태에서는 save()가 일부러 거부한다.
             # 그 경우와 진짜 쓰기 실패를 구분해서 알린다.
             error = settings_store.get_load_error()
-            detail = ("설정 파일을 읽지 못한 상태라 저장하지 않았습니다.\n"
-                      "지금 화면에 보이는 값은 기본값이며, 이대로 저장하면 공유 폴더의 설정이"
-                      " 모두 기본값으로 바뀝니다.\n\n'데이터 위치' 탭에서 폴더 상태를 확인해 주세요."
-                      if error else "설정을 저장하지 못했습니다. 폴더 권한을 확인해 주세요.")
+            if error:
+                detail = ("설정 파일을 읽지 못한 상태라 저장하지 않았습니다.\n"
+                          "지금 화면에 보이는 값은 기본값이며, 이대로 저장하면 공유 위치의 설정이"
+                          " 모두 기본값으로 바뀝니다.\n\n'데이터 위치' 탭에서 상태를 확인해 주세요.")
+            elif datastore.is_server():
+                detail = f"설정을 서버에 저장하지 못했습니다.\n{datastore.describe(datastore.get_state(recheck=True))}"
+            else:
+                detail = "설정을 저장하지 못했습니다. 폴더 권한을 확인해 주세요."
             messagebox.showerror("저장 오류",
-                                 f"{detail}\n\n{settings_store.get_settings_path()}",
+                                 f"{detail}\n\n{settings_store.describe_location()}",
                                  parent=dialog)
             return
         app.apply_settings(settings_store.load())
         result["saved"] = True
         dialog.destroy()
 
-    ttk.Label(buttons, text=f"저장 위치: {settings_store.get_settings_path()}",
+    ttk.Label(buttons, text=f"저장 위치: {settings_store.describe_location()}",
               style="Muted.TLabel", wraplength=520, justify="left").pack(side=tk.LEFT)
     ttk.Button(buttons, text="저장", command=save_and_close).pack(side=tk.RIGHT, padx=4)
     def current_snapshot():

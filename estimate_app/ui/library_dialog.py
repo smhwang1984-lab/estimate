@@ -8,13 +8,14 @@
 먼저 묻는다 — 삭제와 달리 Ctrl+Z로 되돌릴 수 없기 때문이다.
 """
 
+import os
 import queue
 import threading
 import tkinter as tk
 from datetime import datetime
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
-from ..core import datastore, library
+from ..core import datastore, library, paths, remote
 
 _MODE_TITLE = {"save": "견적 저장", "load": "견적 불러오기"}
 
@@ -215,10 +216,22 @@ def open_library_dialog(app, mode="load"):
 
         result = library.save_entry(title, items)
         if result is None:
-            messagebox.showerror(
-                "저장 오류",
-                f"견적을 저장하지 못했습니다.\n{path}\n\n"
-                f"데이터 위치 설정과 폴더 권한을 확인해 주세요.", parent=dialog)
+            if library.get_last_error() == remote.REASON_CONFLICT:
+                # 확인한 직후 그 짧은 틈에 다른 PC가 저장했다. 서버가 덮어쓰기를 막았다.
+                messagebox.showwarning(
+                    "다른 PC가 먼저 저장했습니다",
+                    f"'{title}'을 방금 다른 PC가 서버에 저장해서, 덮어쓰지 않고 멈췄습니다.\n\n"
+                    f"목록을 새로 고칩니다. 다시 저장하면 덮어쓸지 한 번 더 묻습니다.", parent=dialog)
+                refresh_list(select_title=title)
+            elif library.is_server_path(path):
+                messagebox.showerror(
+                    "저장 오류",
+                    f"견적을 서버에 저장하지 못했습니다.\n\n{datastore.describe()}", parent=dialog)
+            else:
+                messagebox.showerror(
+                    "저장 오류",
+                    f"견적을 저장하지 못했습니다.\n{path}\n\n"
+                    f"데이터 위치 설정과 폴더 권한을 확인해 주세요.", parent=dialog)
             return
         app.library_current = {"title": title, "path": result["path"], "mtime": result["mtime"]}
         # 세션에도 바로 남긴다 -- 저장 직후 프로그램을 끄면 이 참조가 사라져, 다음에 켰을 때
@@ -234,10 +247,13 @@ def open_library_dialog(app, mode="load"):
         if entry is None:
             messagebox.showinfo("선택 없음", "지울 견적을 목록에서 고르세요.", parent=dialog)
             return
+        if library.is_server_path(entry["path"]):
+            warning = "모든 PC의 보관함 목록에서 사라집니다. 되살리려면 서버 관리자에게 요청해야 합니다."
+        else:
+            warning = "공유 폴더의 파일이 지워지며 되돌릴 수 없습니다."
         if not messagebox.askyesno(
                 "삭제 확인",
-                f"보관함에서 '{entry['title']}'을 지울까요?\n\n"
-                f"공유 폴더의 파일이 지워지며 되돌릴 수 없습니다.",
+                f"보관함에서 '{entry['title']}'을 지울까요?\n\n{warning}",
                 default="no", parent=dialog):
             return
         if not library.delete_entry(entry["path"]):
@@ -245,6 +261,32 @@ def open_library_dialog(app, mode="load"):
             return
         if (app.library_current or {}).get("path") == entry["path"]:
             app.library_current = None
+        refresh_list()
+
+    def do_upload():
+        """v1.3.0: 이 PC(또는 예전 공유 폴더)의 보관함 파일을 서버로 올린다."""
+        initial = os.path.join(paths.get_user_dir(), datastore.LIBRARY_DIR_NAME)
+        directory = filedialog.askdirectory(
+            parent=dialog, title="서버로 올릴 견적 폴더 선택 (estimates 폴더)",
+            initialdir=initial if os.path.isdir(initial) else paths.get_user_dir())
+        if not directory:
+            return
+        dialog.configure(cursor="watch")
+        dialog.update_idletasks()
+        try:
+            result = library.upload_folder(directory)
+        finally:
+            dialog.configure(cursor="")
+        lines = [f"올림: {len(result['uploaded'])}건"]
+        if result["exists"]:
+            lines.append(f"서버에 같은 이름이 있어 건너뜀: {len(result['exists'])}건\n  "
+                         + ", ".join(result["exists"][:10])
+                         + (" …" if len(result["exists"]) > 10 else ""))
+        if result["failed"]:
+            lines.append(f"실패: {len(result['failed'])}건\n  "
+                         + ", ".join(result["failed"][:10])
+                         + (" …" if len(result["failed"]) > 10 else ""))
+        messagebox.showinfo("서버로 올리기", "\n\n".join(lines), parent=dialog)
         refresh_list()
 
     entry_list.bind("<<ListboxSelect>>", on_select)
@@ -259,6 +301,10 @@ def open_library_dialog(app, mode="load"):
     # 삭제는 공유 폴더의 파일을 지우는 동작이라 되돌릴 수 없다 -- 오클릭을 막으려고 떼어 둔다.
     ttk.Button(action_row, text="삭제", command=do_delete, style="Danger.TButton").pack(side=tk.LEFT, padx=(24, 0))
     ttk.Button(action_row, text="닫기", command=dialog.destroy).pack(side=tk.RIGHT)
+    if datastore.location_is_server():
+        # 서버로 옮기기 전 PC·공유 폴더에 쌓인 견적을 한 번 옮겨 담는 용도다.
+        ttk.Button(action_row, text="폴더에서 서버로 올리기…",
+                   command=do_upload).pack(side=tk.RIGHT, padx=8)
 
     save_row = ttk.Frame(bottom)
     save_row.pack(fill=tk.X, pady=(10, 0))

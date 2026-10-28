@@ -6,6 +6,14 @@
     {데이터 폴더}\\settings.json     단가·Material·비중·가공조건·회사/견적서 양식
     {데이터 폴더}\\estimates\\*.json  견적 보관함(core/library.py)
 
+## v1.3.0: 견적 서버
+
+위치에 폴더 대신 서버 주소(`http://192.168.0.x:8100`)를 적으면 같은 두 가지를 서버
+(estimate_server, NAS 컨테이너)에 둔다. 위치 쪽지 형식은 그대로다 — `path`가 http로
+시작하면 서버로 본다. 그래서 '공유 폴더'를 전제로 한 규칙(못 읽었으면 쓰지 않는다,
+시작할 때 오래 멈추지 않는다)이 서버에도 그대로 걸린다. 폴더 대신 서버를 볼 뿐이다.
+settings.py·library.py가 `is_server()`를 보고 파일 대신 core/remote.py를 부른다.
+
 ## `paths.get_user_dir()`를 통째로 옮기지 않은 이유
 
 사용자 폴더에 있는 파일 넷은 성격이 서로 다르다. 한꺼번에 공유로 옮기면 두 가지가 깨진다.
@@ -42,7 +50,7 @@ import os
 import tempfile
 import threading
 
-from . import paths
+from . import paths, remote
 
 LOCATION_FILE = "data_location.json"
 LIBRARY_DIR_NAME = "estimates"
@@ -55,6 +63,10 @@ REASON_OK = ""
 REASON_MISSING = "missing"          # 경로는 살아 있는데 폴더가 없다
 REASON_UNREACHABLE = "unreachable"  # 정해진 시간 안에 응답이 없다(연결 끊김 등)
 REASON_READONLY = "readonly"        # 폴더는 보이는데 쓸 수 없다(권한)
+# v1.3.0: 견적 서버(core/remote.py)를 데이터 위치로 쓸 때만 나오는 이유.
+REASON_FORBIDDEN = remote.REASON_FORBIDDEN        # 서버가 접속을 거부했다(사내망 밖)
+REASON_INCOMPATIBLE = remote.REASON_INCOMPATIBLE  # 서버 API 버전이 이 프로그램과 다르다
+REASON_SERVER_ERROR = remote.REASON_SERVER_ERROR  # 서버는 답했지만 DB 등에 문제가 있다
 
 _state = None
 
@@ -97,7 +109,12 @@ def clear_location():
 # ---------- 상태 판정 ----------
 
 def _probe_blocking(path):
-    """실제로 써 보고 판정한다. '될 것 같다'로 넘기지 않는다."""
+    """실제로 써 보고 판정한다. '될 것 같다'로 넘기지 않는다.
+
+    v1.3.0: 위치가 서버 주소(http://...)면 폴더 대신 서버의 /health를 확인한다.
+    """
+    if remote.is_server_url(path):
+        return remote.probe(path)
     if not os.path.isdir(path):
         return REASON_MISSING
     try:
@@ -137,7 +154,8 @@ def get_state(recheck=False):
     """지금 데이터 폴더의 상태.
 
         dir     실제로 쓸 폴더 경로
-        shared  공유 폴더를 쓰고 있는가(로컬이면 False)
+        shared  공유 폴더 또는 서버를 쓰고 있는가(로컬이면 False)
+        server  v1.3.0. 위치가 견적 서버 주소인가(이때 dir은 서버 주소다)
         ok      읽고 쓸 수 있는가
         reason  ok가 False일 때의 이유(REASON_* 중 하나)
 
@@ -151,12 +169,13 @@ def get_state(recheck=False):
 
     location = load_location()
     if not location["enabled"]:
-        _state = {"dir": paths.get_user_dir(), "shared": False,
+        _state = {"dir": paths.get_user_dir(), "shared": False, "server": False,
                   "ok": True, "reason": REASON_OK}
         return dict(_state)
 
     reason = probe(location["path"])
     _state = {"dir": location["path"], "shared": True,
+              "server": remote.is_server_url(location["path"]),
               "ok": reason == REASON_OK, "reason": reason}
     return dict(_state)
 
@@ -171,6 +190,9 @@ def get_data_file(filename):
 
 
 def get_library_dir():
+    """보관함 폴더. 서버 모드에서는 화면에 보여 줄 주소일 뿐 파일 경로가 아니다."""
+    if is_server():
+        return get_data_dir().rstrip("/") + "/estimates"
     return os.path.join(get_data_dir(), LIBRARY_DIR_NAME)
 
 
@@ -178,11 +200,31 @@ def is_shared():
     return get_state()["shared"]
 
 
+def is_server():
+    return bool(get_state().get("server"))
+
+
+def location_is_server():
+    """위치 쪽지만 보고 서버 모드인지 답한다. get_state()와 달리 서버에 묻지 않아 즉시 끝난다
+    (프로그램 시작 직후처럼 네트워크를 기다리면 안 되는 자리에서 쓴다)."""
+    location = load_location()
+    return location["enabled"] and remote.is_server_url(location["path"])
+
+
 def describe(state=None):
     """상태를 사람이 읽는 한 줄로. 화면 여러 곳에서 같은 문구를 쓰기 위해 여기 둔다."""
     state = state or get_state()
     if not state["shared"]:
         return "이 PC에만 저장 (기본값)"
+    if state.get("server"):
+        if state["ok"]:
+            return "견적 서버 사용 중 — 정상"
+        return {
+            REASON_UNREACHABLE: "견적 서버에 연결하지 못했습니다 (네트워크·서버 상태 확인)",
+            REASON_FORBIDDEN: "견적 서버가 접속을 거부했습니다 (사내망에서만 사용할 수 있습니다)",
+            REASON_INCOMPATIBLE: "견적 서버 버전이 이 프로그램과 맞지 않습니다 (프로그램 업데이트 필요)",
+            REASON_SERVER_ERROR: "견적 서버에 문제가 있습니다 (서버 관리자에게 알려 주세요)",
+        }.get(state["reason"], "견적 서버를 쓸 수 없습니다")
     if state["ok"]:
         return "공유 폴더 사용 중 — 정상"
     return {

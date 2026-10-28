@@ -1,7 +1,8 @@
 # Estimate(견적) 인수인계서
 
 이 문서 하나만 읽고도 다른 에이전트(Codex 등)나 사람이 곧바로 작업을 이어받을 수 있도록
-정리한 것이다. 마지막 갱신은 **v0.1.4 (2026-08-10)** 기준이다.
+정리한 것이다. 마지막 갱신은 **v1.3.0 (2026-10-28, 견적 서버 추가)** 기준이다.
+v1.3.0에서 바뀐 것은 맨 끝 "v1.3.0 견적 서버" 절에 모아 두었다.
 
 > **읽는 순서**
 > 1. 이 문서 전체 (10분)
@@ -28,9 +29,9 @@ Windows 데스크톱 프로그램이다. 실무 사용자는 생산부장 1명 �
 
 - 금액 = Σ(공정별 시간 × 공정별 단가) × 수량, 최종금액은 1,000원 단위 내림
 - 작업 중 상태는 JSON 세션으로 저장돼 다음 실행 때 복원된다
-- 서버·통신 기능은 **없다**. v0.1.4부터 데이터 폴더를 **네트워크 공유 폴더**로 지정할 수
-  있지만, 그건 평범한 파일 입출력(SMB)일 뿐 HTTP·TLS를 쓰지 않는다
-  (업데이트도 여전히 `{설치폴더}\update`에 설치 파일을 두면 감지하는 방식이다)
+- 데이터 위치는 세 가지다: 이 PC(기본) / 네트워크 공유 폴더(v0.1.4, SMB 파일 입출력) /
+  **견적 서버**(v1.3.0, NAS의 `estimate_server` 컨테이너, 사내망 평문 HTTP — TLS 없음).
+  업데이트는 여전히 `{설치폴더}\update`에 설치 파일을 두면 감지하는 방식이다
 
 ---
 
@@ -38,17 +39,19 @@ Windows 데스크톱 프로그램이다. 실무 사용자는 생산부장 1명 �
 
 | 항목 | 값 |
 |---|---|
-| 버전 | v0.1.4 |
-| 브랜치 | `worktree-v0.0.9` — v0.0.9~v0.1.4가 함께 커밋돼 있다 — **`Estimate` 브랜치에 미병합** |
-| 원격 | **없음** (로컬 전용 저장소) |
+| 버전 | 프로그램 v1.3.0 / 견적 서버 1.0.0 (API 1) |
+| 브랜치 | `feature/server-api` (`Estimate`에서 분기) — **`Estimate`·`main`에 미병합** |
+| 원격 | `origin` = `https://github.com/smhwang1984-lab/estimate.git` |
 | 주 개발 브랜치 | `Estimate` (기본 브랜치는 `main`이지만 실제 작업은 `Estimate`에서 해 왔다) |
-| 설치 파일 | `installer\Output\MachineEstimate_Setup_v0.1.4.exe`. 워크트리 밖 배포 폴더 `C:\Users\SumH\orca\workspaces\Estimate\Estimate\installer\Output\`에도 복사해 뒀다 |
-| Python | 3.14 / openpyxl 3.1.5 / PyInstaller 6.21 |
+| 설치 파일 | `installer\Output\MachineEstimate_Setup_v1.3.0.exe`, 서버 `installer\Output\estimate_server_v1.0.0.zip` |
+| Python | 3.14 / openpyxl 3.1.5 / **PyInstaller 6.22.3** (6.21은 Tcl/Tk 9 Python에서 실행 불가 — 아래 v1.3.0 절) |
+| 서버 Python | 3.12 (Docker `python:3.12-slim`) / fastapi 0.115.6 / uvicorn 0.34.0 / pydantic 2.10.4 / SQLite 내장 |
 | 빌드 형태 | onedir (`dist\Estimate\Estimate.exe` + `_internal\`) |
 | 설치 경로 | `C:\Program Files (x86)\Estimate` |
 
-**병합은 아직 하지 않았다.** 사용자가 v0.1.4를 실사용으로 확인한 뒤 `Estimate` 브랜치로
-합치는 것이 남은 절차다 — v0.0.9~v0.1.3도 아직 병합 전이라 이번에 같이 합치게 된다.
+**v1.3.0은 아직 병합하지 않았다.** NAS에 서버를 배포해 실사용으로 확인한 뒤 `Estimate`
+(그다음 `main`)로 합치는 것이 남은 절차다. 서버와 클라이언트는 같은 브랜치·같은 커밋에
+들어 있다 — 한쪽만 병합하지 말 것.
 
 ---
 
@@ -63,8 +66,9 @@ estimate_app/
   main.py                   Tk 루트 생성
   core/                     화면과 무관한 로직
     paths.py                경로 계산(설치본/소스 실행/사용자 폴더)
-    datastore.py            ★ v0.1.4 신설. 데이터를 어느 폴더에 둘지(로컬/네트워크 공유) + 원자적 쓰기
-    library.py              ★ v0.1.4 신설. 견적 보관함(카드 목록을 이름 붙여 저장/불러오기)
+    datastore.py            ★ v0.1.4 신설. 데이터를 어느 폴더에 둘지(로컬/네트워크 공유/v1.3.0 서버) + 원자적 쓰기
+    library.py              ★ v0.1.4 신설. 견적 보관함(카드 목록을 이름 붙여 저장/불러오기). v1.3.0 서버 분기
+    remote.py               ★ v1.3.0 신설. 견적 서버 HTTP 통신(urllib만, ssl 없이)
     config.py               theme.json·rates.json 읽기, 공정 키 정의(MACHINE_KEYS)
     settings.py             ★ v0.0.9 신설. 설정창 값의 저장소(v0.1.4부터 공유 폴더에 놓일 수 있다)
     model.py                카드 한 건의 자료 구조, 정렬·검색·HRC 조립
@@ -86,6 +90,13 @@ estimate_app/
     theme.json              색·글꼴·열 폭 (재빌드 없이 수정 가능)
     rates.json              단가·공정 표시 이름의 기본값
     estimate.ico            아이콘 (16/32/48 DIB + 256 PNG)
+estimate_server/            ★ v1.3.0 신설. 견적 API 서버(FastAPI + SQLite, NAS Docker). TSERP와 무관
+  app.py                    라우트 + 사내망 IP 관문(대역 밖·판정 불가 IP는 전부 403)
+  store.py                  SQLite 저장(설정 1건, 견적 보관함, 저장 충돌 판정, 소프트 삭제)
+  backup.py                 매일 23:40 스냅샷, 30일 보관
+  config.py                 버전(SERVER_VERSION / API_VERSION)과 환경변수
+  tests/test_api.py         서버 테스트(pytest)
+  DEPLOY_Synology.md        NAS 배포·확인·백업·복구 절차
 견적_산정/양식/견적용.xlsx   ★ 견적 양식 원본. 이 파일 구조가 곧 도메인 규칙이다
 Machine_Estimate.spec       PyInstaller 설정(EXCLUDES 주의, 6절 참고)
 installer/Setup.iss         Inno Setup 스크립트  ← 버전을 올리는 곳 ②
@@ -406,3 +417,55 @@ v0.1.1의 **가공조건 산출기는 카드를 읽기만 한다**는 것도 기
 - 컴파일, 핵심 스모크, 설정 왕복, 가공조건 계산, 사용자 지정 엑셀 헤더 왕복 테스트는 통과했다.
 - 통합 후 v0.1.5 설치 파일은 아직 재빌드하지 않았다. 기존 설치 파일 기록은 통합 전 빌드 결과다.
 - GUI 무인 시작 검증은 사용자가 중단했으므로 통과로 기록하지 않는다.
+## v1.3.0 견적 서버 (2026-10-28)
+
+설정(단가·소재·회사 정보)과 견적 보관함을 공유 폴더 대신 **NAS의 별도 컨테이너**에 둘 수 있게
+했다. 사용자가 "TSERP 서버에 붙이면 TSERP에 영향이 없느냐"를 물어 **TSERP와 완전히 분리**하는
+쪽으로 정했다 — 코드·DB·컨테이너·포트·버전을 하나도 공유하지 않는다.
+
+- **서버**: `estimate_server/` (FastAPI, SQLite 파일 하나, 포트 8100, NAS `/volume1/docker/estimate_server`).
+  배포는 `estimate_server/DEPLOY_Synology.md`.
+- **사내망 전용**: 로그인이 없다. 서버가 직접 본 접속 IP가 `ESTIMATE_ALLOWED_CIDRS`
+  (기본 `192.168.0.0/24,192.168.10.0/24`) 밖이면 경로와 상관없이 403. IP를 못 받았거나 해석 못
+  해도 거부한다(TSERP와 반대 — 거기엔 뒤에 로그인이 한 겹 더 있다). Tailscale VPN은 127.0.0.1로
+  들어와서 자동으로 막힌다. 컨테이너는 **host 네트워크 필수**(bridge면 IP가 172.x로 바뀌어 전부 403).
+- **클라이언트**: 데이터 위치 쪽지(`data_location.json`)의 `path`가 `http://`로 시작하면 서버 모드.
+  `settings.py`·`library.py`가 `datastore.is_server()`를 보고 파일 대신 `core/remote.py`를 부른다.
+  "못 읽었으면 쓰지 않는다", "시작할 때 오래 멈추지 않는다" 규칙은 공유 폴더와 똑같이 걸린다.
+- **보관함 열쇠**: 서버 견적의 `path`는 `srv:{이름}`, `mtime`은 서버가 매기는 값(초 단위, 같은 견적
+  안에서 반드시 커짐). 화면 코드의 충돌 판정·날짜 표시를 그대로 쓰기 위해 파일과 같은 모양으로 맞췄다.
+- **저장 충돌**: 화면의 "남이 고쳤나" 확인에 더해, 서버가 `base_mtime`이 다르면 409로 거절한다
+  (확인과 저장 사이 틈까지 막는다). `library.get_last_error()`가 `conflict`를 돌려준다.
+- **삭제**는 서버에서 표시만 한다(되살리기 절차는 DEPLOY 4-3).
+- **세션의 '마지막 견적' 참조**가 위치를 바꾸기 전 것(서버↔폴더)이면 시작할 때 버린다
+  (`library.belongs_to_location`). 안 그러면 종료 때 자동 저장이 매번 실패해 종료가 안 된다.
+- **이관**: 서버로 처음 옮길 때 서버에 설정이 없으면 지금 설정을 올린다(`relocate`의 copied).
+  예전 보관함 파일은 [견적 불러오기 > 폴더에서 서버로 올리기]로 옮긴다(같은 이름은 건너뜀).
+- **종료 때 보관함 자동 저장이 실패하면** 종료할지 묻는다(기본 [아니요]). [예]면 세션만 남기고 끈다
+  — v1.2.0은 무조건 취소해서, 서버가 꺼져 있으면 작업 관리자로만 끌 수 있었다.
+- **spec의 `_ssl`/`ssl` 제외는 유지**했다. 평문 HTTP만 쓰고, 빌드한 exe가 ssl 없이 서버에 붙는 것을
+  확인했다. https가 필요해지면 그때 제외를 되돌린다.
+
+### 빌드 환경 주의 (PyInstaller 6.21 → 6.22.3)
+
+2026-10-05 재설치된 이 PC의 Python 3.14(`C:\Python314`)는 Tcl/Tk **9.0**을 zipfs로 묶어 둔
+빌드다. PyInstaller 6.21은 이걸 찾지 못해 빌드는 "성공"하지만 exe가 시작하자마자
+`Tcl data directory ... _tcl_data not found`로 죽는다. **6.22.3으로 빌드하면 정상**이다.
+재설치 직후 전역 Python에는 openpyxl·PyInstaller가 없었다. 2026-10-28에
+`C:\Python314`에 `openpyxl==3.1.5`, `pyinstaller==6.22.3`을 설치했고, `build.bat setup`으로
+설치 파일까지 정상 빌드·실행되는 것을 확인했다.
+에이전트 셸에서 `cmd /c build.bat`이 "인식할 수 없는 명령"으로 실패하면 cmd의 AutoRun이
+작업 폴더를 바꾸는 것이다 — `cmd /d /c "C:\dev\estimate\build.bat" setup`처럼 `/d`를 붙인다.
+
+### 검증 (2026-10-28)
+
+- 서버 pytest 20건 통과(사내망 관문 IP 9종, 설정 왕복, 견적 생성·불러오기·목록, 409 충돌 3경로,
+  소프트 삭제·되살리기, 잘못된 이름, DB 사용 불가 시 /health 보고, 백업 생성·정리).
+- 실제 uvicorn 서버 + 클라이언트 core 통합 34건 통과(이관 copied, 설정 왕복, 보관함 전 흐름,
+  화면 흐름 그대로의 충돌 판정, 서버 409, 폴더 올리기·중복 건너뜀, 삭제, 서버 꺼짐 시 저장 거부,
+  로컬 복귀). 기본 대역 서버에 127.0.0.1로 붙으면 `forbidden`으로 나오는 것도 확인.
+- 엑셀 출력 3/7/20/45건: `Estimate` 브랜치(v1.2.0)와 셀 값·행 수·열 폭이 **완전히 같음**.
+- 화면 캡처: 설정 > 데이터 위치(서버 칸), 견적 보관함(서버 목록 + 올리기 버튼) 확인.
+- 빌드한 `Estimate.exe`(v1.3.0)가 서버에 `/health`·`/settings`를 호출하는 것을 서버 로그로 확인.
+- **미실행**: Docker 이미지 빌드(이 PC의 Docker Desktop이 꺼져 있었음), NAS 실배포, 실제 사내 PC
+  여러 대 동시 사용, 설치 파일 실제 설치.

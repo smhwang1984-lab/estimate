@@ -43,7 +43,9 @@ client / supplier 값은 라벨을 뺀 알맹이만 담는다. 예를 들어 `cl
 `부   서 :` 같은 양식 문구까지 다시 적지 않아도 되게 하기 위해서다.
 """
 
-from . import datastore
+import os
+
+from . import datastore, remote
 from .config import DEFAULT_RATES
 
 SETTINGS_FILE = "settings.json"
@@ -218,9 +220,40 @@ def get_settings_path():
     return datastore.get_data_file(SETTINGS_FILE)
 
 
+def describe_location():
+    """화면에 보여 줄 설정 저장 위치. 서버면 파일 경로 대신 서버 주소."""
+    if datastore.is_server():
+        return f"견적 서버 {datastore.get_data_dir()}"
+    return get_settings_path()
+
+
 def get_load_error():
     """마지막 load()가 경로에 못 닿았으면 그 이유, 정상이면 None."""
     return _load_error
+
+
+def _who():
+    # library._who()와 같은 표기. library를 import하면 순환이 생겨 여기 따로 둔다.
+    user = os.environ.get("USERNAME") or os.environ.get("USER") or "?"
+    host = os.environ.get("COMPUTERNAME") or "?"
+    return f"{user}@{host}"
+
+
+def _read_payload():
+    """(내용, 오류). 오류는 None / "missing"(아직 없음 — 정상) / 그 밖(못 믿을 상태).
+
+    v1.3.0: 데이터 위치가 서버면 파일 대신 서버에서 읽는다. 오류 문자열은 datastore와 같다.
+    """
+    if datastore.is_server():
+        return remote.get_settings(datastore.get_data_dir())
+    return datastore.read_json(get_settings_path())
+
+
+def _write_payload(payload):
+    if datastore.is_server():
+        _mtime, error = remote.put_settings(datastore.get_data_dir(), payload, _who())
+        return error is None
+    return datastore.write_json_atomic(get_settings_path(), payload)
 
 
 def _merged(defaults, override):
@@ -409,10 +442,10 @@ def load():
         # 폴더 자체에 못 닿는다. 파일을 열어 보려 하면 SMB 대기 시간만 더 쓴다.
         _load_error = state["reason"]
     else:
-        loaded, error = datastore.read_json(get_settings_path())
-        if error in (datastore.REASON_UNREACHABLE, "broken"):
+        loaded, error = _read_payload()
+        if error and error != datastore.REASON_MISSING:
             # 깨진 파일도 여기 넣는다 — 내용이 무엇이었는지 모르는 채 덮어쓰면
-            # 공유 폴더에서는 남의 설정을 통째로 날리는 것과 같다.
+            # 공유 폴더에서는 남의 설정을 통째로 날리는 것과 같다(서버 오류도 마찬가지).
             _load_error = error
         elif isinstance(loaded, dict):
             payload = loaded
@@ -449,8 +482,8 @@ def save(data, force=False):
             data.get("mill_materials"), DEFAULT_MILL_MATERIALS, MILL_MATERIAL_NUMERIC_FIELDS),
         "headers": _merged(DEFAULT_HEADERS, data.get("headers")),
     }
-    # 임시 파일에 다 쓴 뒤 바꿔치기한다(네트워크 폴더에서 잘린 파일이 남지 않게).
-    return datastore.write_json_atomic(get_settings_path(), payload)
+    # 파일이면 임시 파일에 다 쓴 뒤 바꿔치기한다(네트워크 폴더에서 잘린 파일이 남지 않게).
+    return _write_payload(payload)
 
 
 def relocate(new_path, enabled=True):
@@ -483,8 +516,8 @@ def relocate(new_path, enabled=True):
         return {"ok": False, "reason": "location_write_failed"}
     datastore.get_state(recheck=True)
 
-    target, error = datastore.read_json(get_settings_path())
-    if error in (datastore.REASON_UNREACHABLE, "broken"):
+    target, error = _read_payload()
+    if error and error != datastore.REASON_MISSING:
         # 옮긴 곳의 파일이 수상하다. 원래 위치로 되돌려 놓고 알린다 — 이 상태로 두면
         # 사용자는 설정을 못 고치는 창을 보게 된다.
         datastore.save_location(previous["path"], previous["enabled"])

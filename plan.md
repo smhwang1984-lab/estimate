@@ -2947,3 +2947,74 @@ GUI라 자동 테스트가 없으므로 v0.1.1에서 쓴 방식(실제 Tk 창을
 ### 미실행 항목
 
 - 없음.
+
+
+## 2026-10-28 v1.3.0 견적 서버(별도 컨테이너, 사내망 전용)
+
+### 요청 내용
+
+- 견적 프로그램을 TSERP처럼 서버 API 통신으로 쓰고 싶다.
+- TSERP 서버에 붙이면 TSERP에 영향이 있는지 확인 → 영향(시작 실패 전파, 라이선스 게이트, 백업·복구
+  결합, TSERP 릴리스 규칙에 묶임)이 있어 **별도 컨테이너**로 결정.
+- 결정 사항: 별도 컨테이너 / 사내망만 허용(로그인 없음) / SQLite / 대역 `192.168.0.0/24, 192.168.10.0/24`
+  / 포트 8100 / NAS 경로 `/volume1/docker/estimate_server` / 저장소 폴더 이름 `estimate_server`.
+- 사용자 "승인" 후 구현.
+
+### 확인한 현재 구조
+
+- 데이터 위치는 `core/datastore.py`(로컬/공유 폴더), 설정은 `core/settings.py`, 보관함은
+  `core/library.py`가 맡고 화면은 이 셋만 부른다. 보관함 항목 모양은 `{"path", "mtime", ...}`이고
+  충돌 판정(`is_changed_by_other`)과 안내 문구가 mtime(초)을 날짜로 보여 준다.
+- spec은 `_ssl`/`ssl`/`_hashlib`을 제외하고 있다.
+- TSERP 서버는 host 네트워크 + 접속 IP 판정(3.9.3/3.9.4 교훈: bridge면 172.x, Tailscale은 127.0.0.1).
+
+### 수정 계획
+
+1. `estimate_server/` 신설: FastAPI + SQLite, 사내망 IP 관문(판정 불가 IP도 거부), 견적 저장 시
+   `base_mtime` 충돌 판정(409), 소프트 삭제, 매일 백업, Docker/compose/배포 문서.
+2. 클라이언트: `core/remote.py`(urllib) 신설, 위치 쪽지 `path`가 http면 서버 모드.
+   settings/library가 서버 분기, 화면은 항목 모양을 그대로 받게 `path=srv:{이름}`, `mtime`=서버 값.
+3. 화면: 설정 > 데이터 위치에 [견적 서버 지정], 보관함에 [폴더에서 서버로 올리기], 충돌·오류 문구.
+4. 버전 1.2.0 → 1.3.0, 서버 1.0.0(API 1). 브랜치 `feature/server-api`.
+
+### 반영 내용
+
+- 서버: `estimate_server/{app,store,backup,config}.py`, `tests/test_api.py`, `Dockerfile`,
+  `docker-compose.yml`, `.env.example`, `.dockerignore`, `requirements(-dev).txt`,
+  `run_server_local.bat`, `DEPLOY_Synology.md`.
+- 클라이언트: `core/remote.py` 신설. `core/datastore.py`(서버 모드·이유 3종·`location_is_server`),
+  `core/settings.py`(`_read_payload`/`_write_payload`/`describe_location`), `core/library.py`
+  (서버 분기, 409 처리, `belongs_to_location`, `get_last_error`, `upload_folder`),
+  `ui/settings_dialog.py`(서버 칸·연결 확인·서버용 문구), `ui/library_dialog.py`(올리기 버튼·충돌/삭제 문구),
+  `ui/dashboard.py`(위치 바뀐 세션 참조 버림, 자동 저장 충돌 문구, 상단 표시).
+- `Machine_Estimate.spec`: ssl 제외를 유지하는 이유를 주석으로 남김(코드 변경 없음).
+- 버전: `estimate_app/__init__.py`, `installer/Setup.iss` → 1.3.0.
+- 빌드 도구: PyInstaller 6.21은 이 PC의 Python 3.14(Tcl/Tk 9.0 zipfs)에서 실행 불가 exe를 만들어
+  6.22.3으로 빌드(HANDOVER v1.3.0 절).
+
+### 검증 결과
+
+- `compileall` 통과.
+- 서버 pytest 20건 통과(Python 3.12 + 서버와 같은 고정 버전).
+- 실제 uvicorn 서버 ↔ 클라이언트 core 통합 34건 통과. 기본 대역 서버에 127.0.0.1 접속 시 `forbidden` 확인.
+- 엑셀 출력 3/7/20/45건이 v1.2.0(`Estimate` 브랜치)과 셀 값·행 수·열 폭까지 동일.
+- 화면 캡처로 설정 > 데이터 위치, 견적 보관함(서버 모드) 배치 확인.
+- 빌드 exe(v1.3.0)가 ssl 없이 서버에 `/health`·`/settings` 호출하는 것을 서버 로그로 확인.
+- 산출물: `installer\Output\MachineEstimate_Setup_v1.3.0.exe`, `installer\Output\estimate_server_v1.0.0.zip`.
+
+### 미실행 항목
+
+- Docker 이미지 빌드·실행(이 PC의 Docker Desktop이 꺼져 있었음) — NAS 첫 배포 때 확인 필요.
+- NAS 실배포, 방화벽 설정, 사내 PC 여러 대 동시 사용, 설치 파일 실제 설치.
+- 병합·push(요청 범위 밖).
+
+### 추가 반영 (2026-10-28) — 자동 저장 실패 시 종료 선택지
+
+- 요청: 종료 때 보관함 자동 저장이 실패해도 끌 수 있게.
+- `ui/dashboard.py` `_ask_close_without_save` 신설. 위치 정보 없음 / 다른 곳에서 저장됨 / 저장 실패(서버 꺼짐·409)
+  세 경우 모두 "보관함에 저장하지 않고 종료할까요?"를 묻는다. 기본값은 [아니요](종료 취소, v1.2.0과 같은 동작).
+  [예]면 보관함에는 쓰지 않고 세션(이 PC)만 저장한 뒤 종료 — 다음 실행 때 카드가 그대로 열린다.
+- 검증: 헤드리스 4건 통과(로컬 정상 저장은 묻지 않음 / 서버 꺼짐+아니요=취소 / 서버 꺼짐+예=종료 / 위치 없음=물음).
+- 전역 Python(`C:\Python314`)에 openpyxl 3.1.5, PyInstaller 6.22.3 설치. `build.bat setup` 재빌드:
+  `MachineEstimate_Setup_v1.3.0.exe` 10,713,370 bytes,
+  SHA-256 `2DCF489227A266E36C1DA3C82D0DDE4ABF19C9F767B55DCA50545B4E17989BD7`.

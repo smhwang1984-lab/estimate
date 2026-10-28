@@ -1,0 +1,24 @@
+# Estimate(견적) API 서버 — TSERP 컨테이너와 완전히 별개다(포트·이미지·데이터 모두 다름).
+# NAS 위치: /volume1/docker/estimate_server  (이 파일이 있는 폴더)
+services:
+  estimate-api:
+    build:
+      context: .
+      network: host          # 빌드 중 PyPI 접속용 — Synology DNS 문제 회피(TSERP와 동일)
+    image: estimate-api:latest
+    container_name: estimate-api
+    # host 네트워크 필수: bridge+ports면 접속 IP가 172.x로 바뀌어 사내망 판정이 무력해진다.
+    # host 모드에서는 ports: 를 함께 쓸 수 없다. 포트는 ESTIMATE_PORT로 정한다.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Seoul
+      - ESTIMATE_PORT=${ESTIMATE_PORT:-8100}
+      - ESTIMATE_DATA_DIR=/data
+      - ESTIMATE_ALLOWED_CIDRS=${ESTIMATE_ALLOWED_CIDRS:-192.168.0.0/24,192.168.10.0/24}
+      - ESTIMATE_BACKUP_ENABLED=${ESTIMATE_BACKUP_ENABLED:-1}
+      - ESTIMATE_BACKUP_AT=${ESTIMATE_BACKUP_AT:-23:40}
+      - ESTIMATE_BACKUP_RETENTION_DAYS=${ESTIMATE_BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      # estimate.db 와 backup/ 이 생기는 곳. 서버 파일을 새로 덮어써도 이 폴더는 건드리지 않는다.
+      - ./data:/data

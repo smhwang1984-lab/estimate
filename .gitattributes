@@ -1,0 +1,3 @@
+# 견적 서버 파일은 NAS(Linux)에서 쓴다 — .env·compose·Dockerfile에 CR이 섞이지 않게 LF로 고정
+estimate_server/** text=auto eol=lf
+estimate_server/*.bat text eol=crlf

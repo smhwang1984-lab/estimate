@@ -15,3 +15,9 @@ estimate_v002_035s0nqj/
 
 # --- 엑셀 임시 파일 ---
 ~$*
+
+# --- 견적 서버 로컬 데이터 ---
+estimate_server/data/
+estimate_server/data_local/
+estimate_server/.env
+installer/Output/*.zip

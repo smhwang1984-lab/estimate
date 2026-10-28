@@ -10,8 +10,8 @@ from datetime import datetime
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from .. import APP_TITLE, APP_VERSION
-from ..core import (datastore, display_prefs as display_prefs_store, excel_io, library, paths, session,
-                    settings as settings_store, updater)
+from ..core import (datastore, display_prefs as display_prefs_store, excel_io, library, paths, remote,
+                    session, settings as settings_store, updater)
 from ..core.model import (create_blank_item, filter_items, find_duplicate_part_nos,
                           has_item_data, normalize_part_no)
 from ..core.pricing import calc_total_amount
@@ -68,6 +68,7 @@ class EstimateApp:
             # 백그라운드에서 읽어, 끊긴 SMB 경로 때문에 첫 화면이 멈추지 않게 한다.
             self.settings = settings_store.defaults()
             self.data_state = {"dir": location["path"], "shared": True,
+                               "server": remote.is_server_url(location["path"]),
                                "ok": False, "reason": datastore.REASON_UNREACHABLE}
             self.settings_loading = True
         else:
@@ -154,31 +155,52 @@ class EstimateApp:
 
     # ---------- 창 기본 동작 ----------
 
+    def _ask_close_without_save(self, heading, reason, title):
+        """자동 저장을 못 했을 때 종료할지 묻는다(v1.3.0). '예'면 True.
+
+        v1.2.0은 여기서 무조건 종료를 취소했다. 서버(NAS)가 재부팅 중이면 저장이 계속 실패해
+        작업 관리자로만 끌 수 있었다. 작업 중인 카드는 이어서 save_session()이 이 PC에 남기므로
+        저장하지 않고 꺼도 다음 실행 때 그대로 열린다 — 보관함에 반영되지 않을 뿐이다.
+        기본 선택은 '아니요'(종료 취소)로 둬서 습관적으로 Enter를 눌러도 기존처럼 멈춘다.
+        """
+        return messagebox.askyesno(
+            heading,
+            f"{reason}\n\n"
+            f"보관함에 저장하지 않고 종료할까요?\n"
+            f"작업 중인 카드는 이 PC에 남아 다음 실행 때 그대로 열립니다."
+            f" 보관함의 '{title}'에는 반영되지 않습니다.\n\n"
+            f"[아니요]를 누르면 종료를 취소합니다.",
+            icon="warning", default="no", parent=self.root)
+
     def _autosave_current_library(self):
-        """마지막 보관함 파일만 종료 직전에 원자적으로 덮어쓴다."""
+        """마지막 보관함 파일만 종료 직전에 원자적으로 덮어쓴다.
+
+        True면 종료를 계속한다(저장 성공, 또는 실패했지만 사용자가 그래도 종료를 골랐다).
+        """
         current = self.library_current
         if not current:
             return True
         title = str(current.get("title") or "").strip()
         path = str(current.get("path") or "").strip()
         if not title or not path:
-            messagebox.showerror("자동 저장 오류", "마지막 견적의 저장 위치를 확인할 수 없어 종료를 취소했습니다.",
-                                 parent=self.root)
-            return False
+            return self._ask_close_without_save(
+                "자동 저장 오류", "마지막 견적의 저장 위치를 확인할 수 없습니다.", title or "마지막 견적")
         existing_mtime = library.get_mtime(path)
         if library.is_changed_by_other(current, path, existing_mtime):
             stamp = datetime.fromtimestamp(existing_mtime).strftime("%Y-%m-%d %H:%M:%S")
-            messagebox.showwarning(
+            return self._ask_close_without_save(
                 "자동 저장 중단",
-                f"'{title}'이 다른 곳에서 저장됐습니다 ({stamp}).\n\n"
-                "내용을 확인한 뒤 보관함에서 직접 저장해 주세요. 종료를 취소했습니다.",
-                parent=self.root)
-            return False
+                f"'{title}'이 다른 곳에서 저장됐습니다 ({stamp}).\n"
+                "덮어쓰지 않도록 자동 저장을 멈췄습니다. 내용을 확인한 뒤 보관함에서 직접 저장해 주세요.",
+                title)
         result = library.save_entry(title, self.data, path=path)
         if result is None:
-            messagebox.showerror("자동 저장 오류", f"견적을 저장하지 못해 종료를 취소했습니다.\n\n{path}",
-                                 parent=self.root)
-            return False
+            detail = f"\n{datastore.describe()}" if library.is_server_path(path) else f"\n{path}"
+            if library.get_last_error() == remote.REASON_CONFLICT:
+                detail = ("\n그 사이 다른 PC가 같은 견적을 서버에 저장했습니다."
+                          " 보관함에서 내용을 확인한 뒤 직접 저장해 주세요.")
+            return self._ask_close_without_save(
+                "자동 저장 오류", f"견적을 보관함에 저장하지 못했습니다.{detail}", title)
         self.library_current = {"title": title, "path": result["path"], "mtime": result["mtime"]}
         return True
 
@@ -521,13 +543,15 @@ class EstimateApp:
         if not error:
             return
         state = self.data_state or datastore.get_state()
+        where = "서버" if state.get("server") else "폴더"
+        target = "견적 서버" if state.get("server") else "공유 폴더"
         messagebox.showwarning(
             "설정을 읽지 못했습니다",
-            f"{datastore.describe(state)}\n\n폴더: {state['dir']}\n\n"
-            f"지금 화면의 단가·소재 목록은 기본값입니다. 잘못된 값이 공유 폴더에 덮어써지지"
+            f"{datastore.describe(state)}\n\n{where}: {state['dir']}\n\n"
+            f"지금 화면의 단가·소재 목록은 기본값입니다. 잘못된 값이 {target}에 덮어써지지"
             f" 않도록 설정 저장을 막아 두었습니다.\n\n"
             f"네트워크 연결을 확인한 뒤 프로그램을 다시 켜거나, [설정 > 데이터 위치]에서"
-            f" 폴더를 다시 지정해 주세요.")
+            f" {where}를 다시 지정해 주세요.")
 
 
     # ---------- 열 제목 / 열 폭 ----------
@@ -583,6 +607,10 @@ class EstimateApp:
         # v0.1.4: 보관함 참조도 되살린다. 이게 없으면 프로그램을 껐다 켠 뒤 같은 견적을
         # 저장할 때 "다른 사람이 고쳤습니다" 경고가 조용히 죽는다(session.py 첫머리 참고).
         self.library_current = payload.get("library")
+        # v1.3.0: 데이터 위치를 서버↔폴더로 바꾸기 전에 남은 참조면 버린다. 그대로 두면 종료할
+        # 때 자동 저장이 엉뚱한 위치에 쓰려다 실패해 종료가 계속 취소된다.
+        if self.library_current and not library.belongs_to_location(self.library_current.get("path")):
+            self.library_current = None
         if hasattr(self, "search_var"):
             self.search_var.set(payload["search"])
         self.session_restored_count = len(self.data)
@@ -632,14 +660,15 @@ class EstimateApp:
         if state is None:
             state = datastore.get_state()
             self.data_state = state
+        place = "견적 서버" if state.get("server") else "공유 폴더"
         if getattr(self, "settings_loading", False):
             location_note = "  |  공유 설정 확인 중"
         elif not state["shared"]:
             location_note = ""
         elif state["ok"]:
-            location_note = "  |  공유 폴더"
+            location_note = f"  |  {place}"
         else:
-            location_note = "  |  공유 폴더 연결 안 됨"
+            location_note = f"  |  {place} 연결 안 됨"
         library_note = f"  |  보관함 '{self.library_current['title']}'" if self.library_current else ""
         return (f"작성일 {today}  |  항목 {len(all_items)}건  |  총 견적금액 {total_amount:,}원"
                f"{search_note}{select_note}{duplicate_note}{session_note}"
