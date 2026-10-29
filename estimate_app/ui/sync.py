@@ -19,6 +19,11 @@
 
 보관함에 한 번도 저장하지 않은 카드(library_current 없음)는 맞추지 않는다. 그건 아직 '이 PC의
 작업'이다 — [견적 저장]으로 이름을 붙이는 순간부터 공유된다.
+    공유 견적 따라가기(v1.9.1)
+        [견적 저장]은 항상 "견적" 하나에 쓰므로, 이 PC가 그 견적을 보고 있지 않으면 남의 저장이 안
+        보인다(읽기 전용 PC는 [견적 저장]을 못 눌러 스스로 연결할 수도 없다). 화면이 비어 있으면
+        "견적"을 바로 불러오고, 카드가 있거나 다른 이름의 견적을 보고 있으면 알림 줄에
+        ['견적' 불러오기]를 띄운다 — 이 PC의 카드를 말없이 바꾸지 않는다.
 
 ## 어떻게 아나 — 롱폴링
 
@@ -93,6 +98,7 @@ class SyncManager:
         self.baseline = {}             # 서버와 마지막으로 맞춘 카드 지문 {no: (지문, 표시 이름)}
         self.pushing_summary = ""
         self.pending_settings = False  # 설정창이 닫히면 다시 읽을 것
+        self.single_offered = None     # 공유 견적 불러오기를 알린 그 견적의 mtime(같은 버전은 한 번만 알린다)
 
     # ---------- 변경 내용 요약 (v1.5.0) ----------
 
@@ -363,10 +369,75 @@ class SyncManager:
 
     def _check_library(self):
         current = self._current_server_entry()
-        if current is None:
+        if current is not None:
+            path = current["path"]
+            self._submit("library_checked", lambda: (path, library.peek_mtime(path)))
+        # v1.9.1: [견적 저장]은 항상 하나의 견적("견적")에 쓴다. 이 PC가 그 견적을 보고 있지 않으면
+        # (아무것도 안 불러왔거나 v1.7.0 이전 이름의 견적을 보고 있으면) 다른 PC의 저장이 영영 안 보인다.
+        # 특히 읽기 전용 PC는 [견적 저장]을 못 눌러 스스로 연결할 길이 없다 — 그래서 여기서 따라간다.
+        single = library.entry_path(library.SINGLE_CARD_TITLE)
+        if current is None or current["path"] != single:
+            self._submit("single_checked", lambda: (single, library.peek_mtime(single)))
+
+    def _on_single_checked(self, result):
+        if isinstance(result, Exception):
             return
-        path = current["path"]
-        self._submit("library_checked", lambda: (path, library.peek_mtime(path)))
+        path, (mtime, error) = result
+        if error or mtime is None:
+            return
+        current = self._current_server_entry()
+        if current is not None and current["path"] == path:
+            return
+        if current is None and not self.app.open_popups and not any(has_item_data(i) for i in self.app.data):
+            # 화면이 비어 있으면 잃을 것이 없다. 바로 불러와 그때부터 실시간으로 맞춘다.
+            self._submit("single_loaded", lambda: (path, library.load_entry(path)))
+            return
+        if mtime == self.single_offered:
+            return
+        self.single_offered = mtime
+        title = library.SINGLE_CARD_TITLE
+        if current is None:
+            text = (f"서버에 공유 견적 '{title}'이 있습니다({_stamp(mtime)} 저장). 이 PC는 아직 연결되지 않아"
+                    f" 다른 PC의 변경이 보이지 않습니다. 불러오면 그때부터 실시간으로 반영됩니다.")
+        else:
+            text = (f"이 PC는 '{current['title']}'을 보고 있습니다. 공유 견적 '{title}'은 {_stamp(mtime)}에"
+                    f" 저장됐습니다 — 불러오면 그때부터 실시간으로 반영됩니다.")
+        self.app.show_notice(text, "warn", actions=[(f"'{title}' 불러오기", self.take_single)])
+
+    def take_single(self):
+        """알림 줄의 ['견적' 불러오기]. 지금 카드를 공유 견적으로 바꾸고, 그때부터 그것을 맞춘다."""
+        if self.app.open_popups:
+            messagebox.showwarning("불러올 수 없음", "항목 입력창을 모두 닫은 뒤 다시 눌러 주세요.",
+                                   parent=self.app.root)
+            return
+        title = library.SINGLE_CARD_TITLE
+        if self.app.library_dirty():
+            question = f"이 PC에서 고친 내용(서버에 안 올림)을 버리고 서버의 '{title}'으로 바꿉니다. 계속할까요?"
+        else:
+            question = f"지금 화면의 카드를 서버의 '{title}'으로 바꿉니다. 계속할까요?"
+        if not messagebox.askyesno(f"'{title}' 불러오기", question, default="no", parent=self.app.root):
+            return
+        self.app.hide_notice()
+        path = library.entry_path(title)
+        self._submit("single_loaded", lambda: (path, library.load_entry(path)))
+
+    def _on_single_loaded(self, result):
+        if isinstance(result, Exception):
+            return
+        path, (payload, error) = result
+        if error:
+            self.app.show_notice(f"공유 견적을 불러오지 못했습니다. ({datastore.describe()})", "danger")
+            return
+        current = self._current_server_entry()
+        if current is not None and current["path"] == path:
+            return  # 그사이 이미 연결됐다. 이후로는 보통의 받기가 맞춘다.
+        if not self.app.apply_library_entry(payload, path, quiet=True):
+            self.single_offered = None   # 입력창이 열려 있었다. 다음 변경 때 다시 알린다.
+            return
+        self.conflict = False
+        self.app.show_notice(
+            f"공유 견적 '{payload['title']}'을 불러왔습니다 ({_stamp(payload['mtime'])}). 이제 다른 PC의 변경이"
+            f" 실시간으로 반영됩니다.", "success", auto_hide=True)
 
     def _on_library_checked(self, result):
         if isinstance(result, Exception):
