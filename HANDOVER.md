@@ -1,7 +1,7 @@
 # Estimate(견적) 인수인계서
 
 이 문서 하나만 읽고도 다른 에이전트(Codex 등)나 사람이 곧바로 작업을 이어받을 수 있도록
-정리한 것이다. 마지막 갱신은 **v1.6.0 (2026-10-29, 가로 맞춤)** 기준이다.
+정리한 것이다. 마지막 갱신은 **v1.7.0 (2026-10-29, 데이터 백업)** 기준이다.
 v1.3.0에서 바뀐 것은 맨 끝 "v1.3.0 견적 서버" 절에 모아 두었다.
 
 > **읽는 순서**
@@ -39,11 +39,11 @@ Windows 데스크톱 프로그램이다. 실무 사용자는 생산부장 1명 �
 
 | 항목 | 값 |
 |---|---|
-| 버전 | 프로그램 v1.6.0 / 견적 서버 1.1.0 (API 1, 서버는 v1.4.0과 같다) |
+| 버전 | 프로그램 v1.7.0 / 견적 서버 1.2.0 (API 1) |
 | 브랜치 | `feature/server-api` (`Estimate`에서 분기) — **`Estimate`·`main`에 미병합** |
 | 원격 | `origin` = `https://github.com/smhwang1984-lab/estimate.git` |
 | 주 개발 브랜치 | `Estimate` (기본 브랜치는 `main`이지만 실제 작업은 `Estimate`에서 해 왔다) |
-| 설치 파일 | `installer\Output\MachineEstimate_Setup_v1.6.0.exe`, 서버 `installer\Output\estimate_server_v1.1.0.zip` |
+| 설치 파일 | `installer\Output\MachineEstimate_Setup_v1.7.0.exe`, 서버 `installer\Output\estimate_server_v1.2.0.zip` |
 | Python | 3.14 / openpyxl 3.1.5 / **PyInstaller 6.22.3** (6.21은 Tcl/Tk 9 Python에서 실행 불가 — 아래 v1.3.0 절) |
 | 서버 Python | 3.12 (Docker `python:3.12-slim`) / fastapi 0.115.6 / uvicorn 0.34.0 / pydantic 2.10.4 / SQLite 내장 |
 | 빌드 형태 | onedir (`dist\Estimate\Estimate.exe` + `_internal\`) |
@@ -531,3 +531,27 @@ v0.1.1의 **가공조건 산출기는 카드를 읽기만 한다**는 것도 기
 크면 `_shrink_to_fit`으로 모든 열을 여유 폭(현재 폭 − 최소 40px) 비율로 줄인다. 남으면 기존대로 품명·Comment가
 나눠 갖는다. 최소 폭까지 줄여도 모자란 극단적으로 좁은 창에서만 가로 스크롤바가 나온다(기본 최소 창 1000px에서는
 안 나온다). 저장된 열 폭 설정·열 폭 끌기 규칙은 그대로다. 화면 테스트 36/36(좁은 창·넓은 창 추가).
+
+## v1.7.0 데이터 백업 + 저장카드 1개 (2026-10-29, 서버 1.2.0)
+
+- **서버 1.2.0**: `POST /backup`(지금 스냅샷, `manual_YYYYMMDD_HHMMSS.db`, `backup.run_manual_backup`), `GET /backup`(최근 30개
+  목록). 수동 백업은 `MANUAL_KEEP=50`개만 남기고, 날짜 기준 자동 정리(`prune`)는 `estimate_` 접두사만 본다. 같은 사내망 관문을 지난다.
+  NAS에 새 폴더는 필요 없다(`data/backup/` 자동 생성). 새 ZIP으로 서버를 다시 올려야 단추가 동작한다(옛 서버는 404 → 화면이 안내).
+- **[데이터 백업] 단추**(`dashboard.backup_now`): 서버 모드에서만 동작(로컬 모드는 안내창). 백그라운드 스레드로 호출하고 동기화 줄에
+  `✓ 백업 완료 시각 — 파일명 (KB)` / 실패 문구를 8초 표시. 복구 기능은 없다(NAS에서 DEPLOY_Synology.md 4-2 절차).
+- **저장카드 1개**(`library_dialog.save_single_card`): [견적 저장]은 창 없이 항상 `"견적"` 하나에 덮어쓴다. 불러온 뒤 다른 PC가
+  고쳤을 때만 확인한다. 옛 이름 견적은 지우지 않고 [견적 불러오기] 목록에 남는다. 보관함 창의 저장 UI 코드(`do_save`)는 남아 있으나
+  [견적 저장] 단추에서는 더 열리지 않는다.
+- **편집 암호 / 읽기 전용(v1.7.0에 함께 묶음)**: 서버 `auth.py`(PBKDF2 해시를 `meta.edit_password`에 저장, 로그인하면 해시에서
+  계산한 편집 토큰 발급, 5분 5회 실패 시 IP 429), 쓰기 경로(PUT /settings, PUT·DELETE /estimates, POST /backup)가 `X-Edit-Token`을
+  검사해 401(`locked`)로 거절. 읽기·/changes·/backup 목록은 그대로. `/changes`는 `protected`·`edit_rev`를 싣고 암호 상태가 바뀌면
+  token이 달라져 대기 중인 PC가 바로 깨어난다. 암호를 설정하지 않으면(기본) 예전과 같다. 초기화는 `.env`의
+  `ESTIMATE_RESET_EDIT_PASSWORD=1`(DEPLOY 5). 클라이언트: `core/editlock.py`(토큰은 **메모리에만**, 프로그램을 끄면 읽기 전용으로
+  시작), `ui/password_dialog.py`(unlock / 암호 설정·변경·해제), `dashboard.can_edit()/require_edit()`가 저장·삭제·되돌리기·신규품목·
+  백업·보관함 삭제/업로드·설정 저장의 입구를 막고, 입력창(popup)은 입력칸을 잠근 읽기 전용으로 열린다. 읽기 전용 PC는 자동 저장을
+  올리지 않고 종료 때도 서버에 쓰지 않으며 열 폭도 서버에 저장하지 않는다. 엑셀 출력·조회·가공조건 산출기·화면 설정(테마 등)은
+  막지 않는다. 로컬 폴더 모드에는 암호가 없다. 다른 PC가 암호를 바꾸면 편집 지문 불일치로 이 PC 토큰이 즉시 버려진다.
+  주의: 서버가 '암호 없음'이라고 알려도 토큰은 지우지 않는다(암호를 막 정한 직후 늦게 처리되는 옛 상태 알림이 방금 받은 토큰을 지우던
+  경합을 e2e가 잡았다).
+- **테스트**: 서버 pytest 37/37, 잠금 e2e 31/31, (이전: 서버 pytest 28/28(백업 3건 추가), 백업·단일저장 e2e 13/13, 화면 36/36, 동기화 24/24, 종료 4/4, 엑셀 출력 동일(날짜 셀 제외)).
+  주의: 테스트 서버가 고아로 남으면(스크립트가 중간에 죽을 때) 같은 포트의 다음 실행이 옛 서버에 붙어 엉뚱한 결과를 낸다.

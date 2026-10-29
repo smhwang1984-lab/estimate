@@ -318,6 +318,20 @@ def _build_size_section(app, parent, item, material_var):
     return final_size_var, get_weight
 
 
+def _disable_inputs(widget):
+    """입력칸(Entry·Combobox·체크·라디오·Text)을 잠근다. 버튼(가공조건 산출기 등)은 그대로 둔다."""
+    for child in widget.winfo_children():
+        kind = child.winfo_class()
+        try:
+            if kind in ("TEntry", "TCombobox", "TCheckbutton", "TRadiobutton", "TSpinbox"):
+                child.state(["disabled"])
+            elif kind in ("Text", "Entry", "Checkbutton", "Radiobutton", "Spinbox"):
+                child.configure(state="disabled")
+        except tk.TclError:
+            pass
+        _disable_inputs(child)
+
+
 def open_item_popup(app, no, *, items=None, popup_key=None, on_change=None,
                     on_next=None, title_label=None):
     """항목 입력창을 연다.
@@ -538,6 +552,9 @@ def open_item_popup(app, no, *, items=None, popup_key=None, on_change=None,
     popup.after_idle(focus_input)
 
     def save_and_close(next_item=False):
+        if not app.can_edit():
+            messagebox.showinfo("읽기 전용", "편집 암호를 입력한 PC에서만 저장할 수 있습니다.", parent=popup)
+            return
         if not fields["part_no"].get().strip() or not fields["part_name"].get().strip():
             messagebox.showerror("입력 오류", "품번과 품명은 필수 입력 항목입니다.", parent=popup)
             return
@@ -593,6 +610,13 @@ def open_item_popup(app, no, *, items=None, popup_key=None, on_change=None,
 
     btns = ttk.Frame(frame)
     btns.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(18, 0))
-    ttk.Button(btns, text="저장 후 다음 항목 입력", command=lambda: save_and_close(True)).pack(side=tk.LEFT)
-    ttk.Button(btns, text="취소/닫기", command=close_popup).pack(side=tk.RIGHT, padx=(0, 8))
-    ttk.Button(btns, text="저장", command=lambda: save_and_close(False)).pack(side=tk.RIGHT)
+    if app.can_edit():
+        ttk.Button(btns, text="저장 후 다음 항목 입력", command=lambda: save_and_close(True)).pack(side=tk.LEFT)
+        ttk.Button(btns, text="취소/닫기", command=close_popup).pack(side=tk.RIGHT, padx=(0, 8))
+        ttk.Button(btns, text="저장", command=lambda: save_and_close(False)).pack(side=tk.RIGHT)
+    else:
+        # v1.7.0: 읽기 전용 PC는 내용을 볼 수만 있다. 입력칸을 잠그고 저장 단추를 두지 않는다.
+        ttk.Label(btns, text="🔒 읽기 전용 — 편집 암호를 입력한 PC에서만 수정할 수 있습니다.",
+                  style="Muted.TLabel").pack(side=tk.LEFT)
+        ttk.Button(btns, text="닫기", command=close_popup).pack(side=tk.RIGHT, padx=(0, 8))
+        _disable_inputs(frame)

@@ -181,6 +181,8 @@ def open_library_dialog(app, mode="load"):
         dialog.destroy()
 
     def do_save():
+        if not app.require_edit("견적 저장", parent=dialog):
+            return
         title = library.sanitize_title(name_var.get())
         if not title:
             messagebox.showinfo("이름 필요", "저장할 이름을 적어 주세요.", parent=dialog)
@@ -244,6 +246,8 @@ def open_library_dialog(app, mode="load"):
         refresh_list(select_title=title)
 
     def do_delete():
+        if not app.require_edit("견적 삭제", parent=dialog):
+            return
         entry = selected_entry()
         if entry is None:
             messagebox.showinfo("선택 없음", "지울 견적을 목록에서 고르세요.", parent=dialog)
@@ -266,6 +270,8 @@ def open_library_dialog(app, mode="load"):
         refresh_list()
 
     def do_upload():
+        if not app.require_edit("서버로 올리기", parent=dialog):
+            return
         """v1.3.0: 이 PC(또는 예전 공유 폴더)의 보관함 파일을 서버로 올린다."""
         initial = os.path.join(paths.get_user_dir(), datastore.LIBRARY_DIR_NAME)
         directory = filedialog.askdirectory(
@@ -335,3 +341,52 @@ def open_library_dialog(app, mode="load"):
 
     dialog.bind("<Escape>", lambda event: dialog.destroy())
     app.root.wait_window(dialog)
+
+
+SINGLE_CARD_TITLE = "견적"   # v1.7.0: 저장카드는 하나. 이름을 묻지 않고 항상 이 견적에 덮어쓴다.
+
+
+def save_single_card(app):
+    """[견적 저장] 단추. 이름 없이 하나의 견적("견적")에 저장한다.
+
+    덮어쓰기 확인은 하지 않는다(덮어쓰는 것이 이 방식의 전부다). 다만 내가 불러온 뒤 다른 PC가
+    그 견적을 고쳐 놨다면 그 내용이 사라지므로 그때만 묻는다. 이미 저장된 다른 이름의 견적은
+    건드리지 않는다 — [견적 불러오기] 목록에 그대로 남는다.
+    """
+    if not app.require_edit("견적 저장"):
+        return False
+    items = [item for item in app.data]
+    if not items:
+        messagebox.showinfo("저장할 항목 없음", "저장할 카드가 없습니다.", parent=app.root)
+        return False
+    title = SINGLE_CARD_TITLE
+    path = library.entry_path(title)
+    existing_mtime = library.get_mtime(path)
+    current = app.library_current or {}
+    if existing_mtime is not None and library.is_changed_by_other(current, path, existing_mtime):
+        stamp = datetime.fromtimestamp(existing_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        if not messagebox.askyesno(
+                "다른 사람이 고쳤습니다",
+                f"'{title}'은 불러온 뒤에 다른 곳에서 저장됐습니다 (마지막 저장 {stamp}).\n\n"
+                f"지금 저장하면 그 내용이 사라집니다. 덮어쓸까요?",
+                default="no", parent=app.root):
+            return False
+    result = library.save_entry(title, items)
+    if result is None:
+        if library.get_last_error() == remote.REASON_CONFLICT:
+            messagebox.showwarning(
+                "다른 PC가 먼저 저장했습니다",
+                f"'{title}'을 방금 다른 PC가 서버에 저장해서, 덮어쓰지 않고 멈췄습니다.\n\n"
+                f"다시 저장하면 덮어쓸지 한 번 더 묻습니다.", parent=app.root)
+        elif library.is_server_path(path):
+            messagebox.showerror("저장 오류", f"견적을 서버에 저장하지 못했습니다.\n\n{datastore.describe()}",
+                                 parent=app.root)
+        else:
+            messagebox.showerror("저장 오류", f"견적을 저장하지 못했습니다.\n{path}\n\n"
+                                 f"데이터 위치 설정과 폴더 권한을 확인해 주세요.", parent=app.root)
+        return False
+    app.set_library_current({"title": title, "path": result["path"], "mtime": result["mtime"]})
+    app.sync.conflict = False
+    app.save_session(sync=False)
+    app.show_notice(f"✓ '{title}' {result['count']}건을 저장했습니다.", "success", auto_hide=True)
+    return True

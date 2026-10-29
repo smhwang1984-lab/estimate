@@ -107,6 +107,8 @@ def _persist_column_widths(app):
     사본이라, 서버·공유 폴더를 쓰는 중에 다른 PC가 단가를 고쳤다면 낡은 값이다. 그대로 통째로
     저장하면 열 폭을 끈 것만으로 남의 단가 수정이 날아간다.
     """
+    if not app.can_edit():
+        return   # v1.7.0: 읽기 전용 PC는 서버 설정에 쓰지 않는다(열 폭은 이번 실행에서만 유지)
     payload = settings_store.load()
     payload["col_widths"] = dict(app.col_widths)
     if settings_store.save(payload):

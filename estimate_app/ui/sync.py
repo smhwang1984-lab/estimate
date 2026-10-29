@@ -57,7 +57,7 @@ from datetime import datetime
 
 from tkinter import messagebox
 
-from ..core import datastore, library, remote, settings as settings_store
+from ..core import datastore, editlock, library, remote, settings as settings_store
 from ..core.model import has_item_data
 
 WAIT_SECONDS = 25
@@ -158,8 +158,10 @@ class SyncManager:
             except Exception:
                 pass
         self._reset_flags()
+        editlock.reset()   # 다른 서버(또는 로컬)로 옮기면 이전 서버의 편집 권한을 들고 가지 않는다
         self.stop_event = None
         self.app.hide_notice()
+        self.app.update_edit_ui()
         self.start()
 
     def start(self):
@@ -241,6 +243,10 @@ class SyncManager:
                         print(f"[sync] {kind} handler failed: {exc}", flush=True)
         except queue.Empty:
             pass
+        if editlock.consume_revoked_event():
+            self.app.update_edit_ui()
+            self.app.show_notice("🔒 편집 암호가 바뀌어 읽기 전용으로 돌아갔습니다. 새 암호를 입력해 주세요.",
+                                 "warn", auto_hide=True)
         if self.pending_settings and self.app.settings_window is None:
             self.pending_settings = False
             self._reload_settings("remote")
@@ -270,7 +276,20 @@ class SyncManager:
             text = "● 서버 연결 끊김 — 자동으로 다시 연결하는 중. 고친 내용은 이 PC에 보관했다가 연결되면 올립니다."
         self.app.show_notice(text, "danger")
 
+    def _check_edit_state(self, body):
+        """서버가 알려 준 편집 암호 상태를 반영한다(다른 PC가 암호를 켜고 끄고 바꾸는 것도 곧바로 반영)."""
+        if not isinstance(body, dict) or "protected" not in body:
+            return
+        before = (editlock.is_protected(), editlock.can_edit())
+        outcome = editlock.apply_server_state(body.get("protected"), body.get("edit_rev"))
+        if outcome == "revoked":
+            self.app.show_notice("🔒 편집 암호가 바뀌어 읽기 전용으로 돌아갔습니다. 새 암호를 입력해 주세요.",
+                                 "warn", auto_hide=True)
+        if before != (editlock.is_protected(), editlock.can_edit()):
+            self.app.update_edit_ui()
+
     def _on_connected(self, body):
+        self._check_edit_state(body)
         was_down = self.connected is False
         first = self.connected is None
         self.connected = True
@@ -289,6 +308,7 @@ class SyncManager:
         self._refresh_library_window()
 
     def _on_changed(self, body):
+        self._check_edit_state(body)
         self._check_settings(body)
         self._check_library()
         self._refresh_library_window()
@@ -464,6 +484,8 @@ class SyncManager:
         """카드가 바뀌었다(app.save_session에서 부른다). 잠깐 모았다가 서버에 올린다."""
         if not self.is_active() or self.conflict or self._current_server_entry() is None:
             return
+        if not self.app.can_edit():
+            return   # v1.7.0: 읽기 전용 PC는 자동 저장을 올리지 않는다
         if not force and not self.app.library_dirty():
             return
         if self.push_after_id is not None:
@@ -516,6 +538,10 @@ class SyncManager:
                 self.schedule_push()
             return
         self.push_again = False
+        if error == remote.REASON_LOCKED:
+            self.app.update_edit_ui()
+            self.app.set_sync_status("🔒 읽기 전용 — 편집 암호를 입력해야 서버에 저장됩니다", "warn")
+            return
         if error == remote.REASON_CONFLICT:
             def work():
                 return library.peek_mtime(sent["path"])
