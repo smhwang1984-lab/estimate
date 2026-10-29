@@ -374,3 +374,87 @@ def test_reset_env_clears_password_on_startup(data_dir, monkeypatch):
     with make_client() as c:
         assert c.get("/auth/status").json()["protected"] is False
         assert c.put(url("A"), json={"payload": payload(), "base_mtime": None}).status_code == 200
+
+
+# ---------- 백업에서 복원 (서버 1.3.0) ----------
+
+def titles(client):
+    return sorted(e["title"] for e in client.get("/estimates").json()["entries"])
+
+
+def test_restore_returns_data_and_keeps_safety_copy(client, data_dir):
+    client.put(url("A"), json={"payload": payload(), "base_mtime": None})
+    name = client.post("/backup").json()["name"]
+    client.put(url("B"), json={"payload": payload(3), "base_mtime": None})
+    client.delete(url("A"))
+    assert titles(client) == ["B"]
+    token_before = client.get("/changes").json()["token"]
+
+    res = client.post("/backup/restore", json={"name": name})
+    assert res.status_code == 200
+    info = res.json()
+    assert info["ok"] and info["restored"] == name and info["safety"].startswith("before_restore_")
+    assert titles(client) == ["A"]
+    assert client.get("/changes").json()["token"] != token_before
+
+    # 복원 직전 상태(B만 있음)가 따로 남아 있고, 목록에서 되돌릴 수 있다
+    entries = {e["name"]: e for e in client.get("/backup").json()["entries"]}
+    assert entries[info["safety"]]["kind"] == "restore" and entries[info["safety"]]["estimates"] == 1
+    assert entries[name]["estimates"] == 1
+    assert client.post("/backup/restore", json={"name": info["safety"]}).status_code == 200
+    assert titles(client) == ["B"]
+
+
+def test_restore_keeps_current_edit_password(client, data_dir):
+    client.put(url("A"), json={"payload": payload(), "base_mtime": None})
+    name = client.post("/backup").json()["name"]      # 암호가 없던 시점
+    token = set_pw(client, "abcd").json()["token"]
+    headers = {"X-Edit-Token": token}
+    assert client.post("/backup/restore", json={"name": name}).status_code == 401
+    assert client.post("/backup/restore", json={"name": name}, headers=headers).status_code == 200
+    assert client.get("/auth/status").json()["protected"] is True       # 복원이 암호를 지우지 못한다
+    assert client.put(url("X"), json={"payload": payload(), "base_mtime": None}).status_code == 401
+    assert client.put(url("X"), json={"payload": payload(), "base_mtime": None}, headers=headers).status_code == 200
+
+
+def test_restore_rejects_bad_names_and_broken_files(client, data_dir):
+    directory = config.backup_dir()
+    os.makedirs(directory, exist_ok=True)
+    for bad in ("../estimate.db", "..\\estimate.db", "estimate.db", "x.db", "", "manual_x.txt"):
+        assert client.post("/backup/restore", json={"name": bad}).status_code == 400
+    assert client.post("/backup/restore", json={"name": "manual_20000101_000000.db"}).status_code == 404
+    with open(os.path.join(directory, "manual_20000102_000000.db"), "wb") as handle:
+        handle.write(b"not a database")
+    assert client.post("/backup/restore", json={"name": "manual_20000102_000000.db"}).status_code == 400
+    # 실패한 복원이 지금 데이터를 건드리지 않았다
+    client.put(url("A"), json={"payload": payload(), "base_mtime": None})
+    assert client.post("/backup/restore", json={"name": "manual_20000102_000000.db"}).status_code == 400
+    assert titles(client) == ["A"]
+
+
+def test_restore_blocked_outside_lan(data_dir):
+    with make_client(("8.8.8.8", 50000)) as outsider:
+        assert outsider.post("/backup/restore", json={"name": "manual_x.db"}).status_code == 403
+
+
+def test_restore_prunes_old_safety_copies(client, data_dir, monkeypatch):
+    monkeypatch.setattr(backup, "RESTORE_KEEP", 2)
+    directory = config.backup_dir()
+    os.makedirs(directory, exist_ok=True)
+    for i in range(4):
+        open(os.path.join(directory, f"before_restore_2000010{i}_000000.db"), "wb").close()
+    name = client.post("/backup").json()["name"]
+    assert client.post("/backup/restore", json={"name": name}).status_code == 200
+    kept = [n for n in os.listdir(directory) if n.startswith("before_restore_")]
+    assert len(kept) == 2
+
+
+def test_restore_twice_in_same_second_does_not_overwrite_source(client, data_dir):
+    client.put(url("A"), json={"payload": payload(), "base_mtime": None})
+    name = client.post("/backup").json()["name"]
+    client.put(url("B"), json={"payload": payload(3), "base_mtime": None})
+    safety = client.post("/backup/restore", json={"name": name}).json()["safety"]
+    assert titles(client) == ["A"]
+    # 곧바로 복원 직전 상태로 되돌린다 — 새 복원 직전 파일이 방금 파일을 덮으면 B가 사라진다
+    assert client.post("/backup/restore", json={"name": safety}).status_code == 200
+    assert titles(client) == ["A", "B"]

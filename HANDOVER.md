@@ -1,7 +1,7 @@
 # Estimate(견적) 인수인계서
 
 이 문서 하나만 읽고도 다른 에이전트(Codex 등)나 사람이 곧바로 작업을 이어받을 수 있도록
-정리한 것이다. 마지막 갱신은 **v1.7.0 (2026-10-29, 데이터 백업)** 기준이다.
+정리한 것이다. 마지막 갱신은 **v1.8.0 (2026-10-29, 백업에서 복원)** 기준이다.
 v1.3.0에서 바뀐 것은 맨 끝 "v1.3.0 견적 서버" 절에 모아 두었다.
 
 > **읽는 순서**
@@ -39,11 +39,11 @@ Windows 데스크톱 프로그램이다. 실무 사용자는 생산부장 1명 �
 
 | 항목 | 값 |
 |---|---|
-| 버전 | 프로그램 v1.7.0 / 견적 서버 1.2.0 (API 1) |
+| 버전 | 프로그램 v1.8.0 / 견적 서버 1.3.0 (API 1) |
 | 브랜치 | `feature/server-api` (`Estimate`에서 분기) — **`Estimate`·`main`에 미병합** |
 | 원격 | `origin` = `https://github.com/smhwang1984-lab/estimate.git` |
 | 주 개발 브랜치 | `Estimate` (기본 브랜치는 `main`이지만 실제 작업은 `Estimate`에서 해 왔다) |
-| 설치 파일 | `installer\Output\MachineEstimate_Setup_v1.7.0.exe`, 서버 `installer\Output\estimate_server_v1.2.0.zip` |
+| 설치 파일 | `installer\Output\MachineEstimate_Setup_v1.8.0.exe`, 서버 `installer\Output\estimate_server_v1.3.0.zip` |
 | Python | 3.14 / openpyxl 3.1.5 / **PyInstaller 6.22.3** (6.21은 Tcl/Tk 9 Python에서 실행 불가 — 아래 v1.3.0 절) |
 | 서버 Python | 3.12 (Docker `python:3.12-slim`) / fastapi 0.115.6 / uvicorn 0.34.0 / pydantic 2.10.4 / SQLite 내장 |
 | 빌드 형태 | onedir (`dist\Estimate\Estimate.exe` + `_internal\`) |
@@ -532,13 +532,30 @@ v0.1.1의 **가공조건 산출기는 카드를 읽기만 한다**는 것도 기
 나눠 갖는다. 최소 폭까지 줄여도 모자란 극단적으로 좁은 창에서만 가로 스크롤바가 나온다(기본 최소 창 1000px에서는
 안 나온다). 저장된 열 폭 설정·열 폭 끌기 규칙은 그대로다. 화면 테스트 36/36(좁은 창·넓은 창 추가).
 
+## v1.8.0 백업에서 복원 (2026-10-29, 서버 1.3.0)
+
+- **서버 1.3.0**: `POST /backup/restore {name}`(`backup.restore_backup`). 편집 암호가 걸려 있으면 토큰 필요(401). 순서: 이름 검사(목록에
+  나오는 접두사 `estimate_`·`manual_`·`before_restore_` + `.db`, 경로 문자 거부) → 백업 파일을 읽기 전용으로 열어 `quick_check`와 필수
+  표(meta·settings·estimates) 확인 → **지금 상태를 `before_restore_YYYYMMDD_HHMMSS.db`로 먼저 저장(10개 보관)** → sqlite 백업 API로
+  '백업 → 지금 DB'에 덮어쓴다(파일을 바꿔 끼우지 않으므로 서버가 DB를 열어 둔 채여도 안전) → `library_rev`를 (지금, 백업) 중 큰 값 +1로
+  올려 모든 PC가 변경을 알아차리게 한다 → `_notify_change()`. **편집 암호는 지금 값을 유지한다**(백업 시점에 암호가 없었어도 복원이
+  암호를 지우지 못한다 — 처음 계획의 '백업 시점 암호로 바뀜'에서 바꿨다). `GET /backup` 목록에 `kind`(manual/auto/restore)와 백업 안의 견적
+  수(`estimates`)가 추가됐다. 같은 초에 스냅샷을 또 만들면 `_2`, `_3`을 붙여 기존 파일을 덮지 않는다(복원 직후 곧바로 '복원 직전'으로
+  되돌릴 때 그 파일이 원본이라서 — 테스트가 잡은 결함).
+- **[백업에서 복원] 단추**(`ui/restore_dialog.py`, `dashboard.restore_backup`): 서버 모드에서만, 편집 권한이 있어야(`require_edit`) 열린다.
+  목록(시각·구분·견적 수·크기)에서 고르고 확인하면 서버가 복원한다. 복원된 내용은 평소 실시간 동기화(`/changes`)로 모든 PC 화면에 반영된다
+  (이 PC에 안 올린 변경이 있으면 기존 충돌 알림이 뜬다). 되돌리려면 같은 창에서 '복원 직전' 항목을 복원한다. 부분(견적 1개) 복원은 없다.
+- **테스트**: 서버 pytest 43/43(복원 6건 추가), 복원 e2e 23/23(`restore_e2e.py`: 복원·되돌리기·확인 거절·읽기 전용 PC 차단·암호 유지),
+  화면 36/36, 잠금 31/31, 동기화 24/24, 백업 13/13, 클라이언트 34/34, 종료 4/4.
+- 산출물: `MachineEstimate_Setup_v1.8.0.exe`, `estimate_server_v1.3.0.zip`(NAS 재배포 필요, 옛 서버면 단추가 '서버 버전이 낮습니다'로 안내).
+
 ## v1.7.0 데이터 백업 + 저장카드 1개 (2026-10-29, 서버 1.2.0)
 
 - **서버 1.2.0**: `POST /backup`(지금 스냅샷, `manual_YYYYMMDD_HHMMSS.db`, `backup.run_manual_backup`), `GET /backup`(최근 30개
   목록). 수동 백업은 `MANUAL_KEEP=50`개만 남기고, 날짜 기준 자동 정리(`prune`)는 `estimate_` 접두사만 본다. 같은 사내망 관문을 지난다.
   NAS에 새 폴더는 필요 없다(`data/backup/` 자동 생성). 새 ZIP으로 서버를 다시 올려야 단추가 동작한다(옛 서버는 404 → 화면이 안내).
 - **[데이터 백업] 단추**(`dashboard.backup_now`): 서버 모드에서만 동작(로컬 모드는 안내창). 백그라운드 스레드로 호출하고 동기화 줄에
-  `✓ 백업 완료 시각 — 파일명 (KB)` / 실패 문구를 8초 표시. 복구 기능은 없다(NAS에서 DEPLOY_Synology.md 4-2 절차).
+  `✓ 백업 완료 시각 — 파일명 (KB)` / 실패 문구를 8초 표시. 복구는 v1.8.0의 [백업에서 복원] 또는 NAS에서 DEPLOY_Synology.md 4-2 절차.
 - **저장카드 1개**(`library_dialog.save_single_card`): [견적 저장]은 창 없이 항상 `"견적"` 하나에 덮어쓴다. 불러온 뒤 다른 PC가
   고쳤을 때만 확인한다. 옛 이름 견적은 지우지 않고 [견적 불러오기] 목록에 남는다. 보관함 창의 저장 UI 코드(`do_save`)는 남아 있으나
   [견적 저장] 단추에서는 더 열리지 않는다.

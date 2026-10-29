@@ -19,6 +19,7 @@ from .condition_dialog import open_condition_dialog
 from .library_dialog import open_library_dialog, save_single_card
 from .new_items_dialog import open_new_items_dialog
 from .password_dialog import unlock as unlock_edit
+from .restore_dialog import open_restore_dialog
 from .popup import open_item_popup
 from .settings_dialog import open_settings_dialog
 from .sync import SyncManager
@@ -280,6 +281,7 @@ class EstimateApp:
         self._tool_button(left, "가공조건 산출기", self.open_condition_dialog)
         self._tool_separator(left)
         self._tool_button(left, "데이터 백업", self.backup_now)
+        self._tool_button(left, "백업에서 복원", self.restore_backup)
         right = tk.Frame(bar, bg=c["panel"])
         right.pack(side=tk.RIGHT)
         # v1.7.0: 서버에 편집 암호가 걸려 있을 때만 보이는 잠금 단추(읽기 전용 / 편집 가능).
@@ -517,6 +519,10 @@ class EstimateApp:
 
         threading.Thread(target=work, daemon=True, name="estimate-backup").start()
         self.root.after(150, lambda: self._finish_backup(box))
+
+    def restore_backup(self):
+        """[백업에서 복원] 단추. 서버의 백업 목록에서 시점을 골라 서버 데이터를 되돌린다(v1.8.0)."""
+        open_restore_dialog(self)
 
     def _finish_backup(self, box):
         if not box:
