@@ -243,6 +243,29 @@ def create_backup(request: Request):
     return {"ok": True, **info}
 
 
+class RestoreBody(BaseModel):
+    name: str = Field(default="", max_length=200)
+
+
+@app.post("/backup/restore")
+def restore_backup(body: RestoreBody, request: Request):
+    """선택한 백업으로 DB를 되돌린다(v1.3.0). 편집 암호가 걸려 있으면 암호 입력한 PC만 가능."""
+    if not _db_ready():
+        return _fail(503, "server_error", "서버 DB를 사용할 수 없습니다.")
+    denied = _edit_denied(request)
+    if denied:
+        return denied
+    try:
+        info = backup.restore_backup(body.name)
+    except backup.RestoreError as exc:
+        return _fail(404 if exc.reason == "missing" else 400, exc.reason, exc.msg)
+    except Exception as exc:
+        return _fail(500, "server_error", f"복원하지 못했습니다: {exc}")
+    auth.reset_cache()
+    _notify_change()
+    return {"ok": True, **info}
+
+
 @app.get("/backup")
 def list_backup():
     return {"entries": backup.list_backups()}

@@ -6,7 +6,7 @@ TSERP 서버와는 코드·DB·컨테이너·버전을 하나도 공유하지 �
 import ipaddress
 import os
 
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 # 클라이언트가 /health에서 이 값을 보고 자기와 맞는 서버인지 판단한다. 요청·응답 형식을
 # 호환되지 않게 바꿀 때만 올린다(클라이언트 core/remote.py의 API_VERSION과 짝).
 API_VERSION = 1

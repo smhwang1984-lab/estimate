@@ -173,6 +173,7 @@ def delete_estimate(base, title, deleted_by):
 
 
 BACKUP_TIMEOUT = 30.0
+RESTORE_TIMEOUT = 60.0
 
 
 def create_backup(base):
@@ -181,6 +182,27 @@ def create_backup(base):
     if error:
         return (body if isinstance(body, dict) else None), error
     if not isinstance(body, dict) or not body.get("name"):
+        return None, REASON_BROKEN
+    return body, None
+
+
+def list_backups(base):
+    """서버의 백업 목록(최근 30개, 새것부터). (list, 오류). 옛 서버에도 목록은 있다."""
+    body, error = _request(base, "GET", "/backup")
+    if error:
+        return None, error
+    entries = body.get("entries") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return None, REASON_BROKEN
+    return entries, None
+
+
+def restore_backup(base, name):
+    """고른 백업으로 서버 데이터를 되돌린다(서버 1.3.0+). ({restored, safety} 또는 오류 본문, 오류)."""
+    body, error = _request(base, "POST", "/backup/restore", {"name": name}, timeout=RESTORE_TIMEOUT)
+    if error:
+        return (body if isinstance(body, dict) else None), error
+    if not isinstance(body, dict) or not body.get("restored"):
         return None, REASON_BROKEN
     return body, None
 
