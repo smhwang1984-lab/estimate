@@ -14,6 +14,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote
 
+from . import editlock
+
 # 서버 config.API_VERSION과 짝. 서버가 다른 값을 내면 이 프로그램은 그 서버를 쓰지 않는다.
 API_VERSION = 1
 
@@ -27,6 +29,9 @@ REASON_INCOMPATIBLE = "incompatible"
 REASON_SERVER_ERROR = "server_error"
 REASON_CONFLICT = "conflict"
 REASON_BROKEN = "broken"
+REASON_LOCKED = "locked"            # v1.7.0: 서버에 편집 암호가 걸려 있고 이 PC는 입력하지 않았다
+REASON_BAD_PASSWORD = "bad_password"
+REASON_THROTTLED = "throttled"  # 암호를 여러 번 틀려 잠시 막힘
 
 
 def is_server_url(path):
@@ -44,6 +49,9 @@ def normalize_url(text):
 def _request(base, method, path, body=None, timeout=TIMEOUT):
     data = None
     headers = {"Accept": "application/json"}
+    edit_token = editlock.token()
+    if edit_token:
+        headers["X-Edit-Token"] = edit_token
     if body is not None:
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json; charset=utf-8"
@@ -56,8 +64,14 @@ def _request(base, method, path, body=None, timeout=TIMEOUT):
             detail = json.loads(exc.read().decode("utf-8"))
         except (ValueError, OSError):
             detail = {}
-        reason = {403: REASON_FORBIDDEN, 404: REASON_MISSING,
-                  409: REASON_CONFLICT}.get(exc.code, REASON_SERVER_ERROR)
+        reason = {403: REASON_FORBIDDEN, 404: REASON_MISSING, 409: REASON_CONFLICT,
+                  429: REASON_THROTTLED}.get(exc.code, REASON_SERVER_ERROR)
+        if exc.code == 401:
+            if isinstance(detail, dict) and detail.get("reason") == "bad_password":
+                reason = REASON_BAD_PASSWORD
+            else:
+                reason = REASON_LOCKED
+                editlock.note_locked()
         return detail if isinstance(detail, dict) else {}, reason
     except (urllib.error.URLError, OSError):
         # 연결 거부·시간 초과·이름 해석 실패 모두 '서버에 못 닿음'으로 본다.
@@ -156,3 +170,58 @@ def put_estimate(base, title, payload, base_mtime, saved_by):
 def delete_estimate(base, title, deleted_by):
     _body, error = _request(base, "DELETE", _estimate_path(title) + "?by=" + quote(deleted_by, safe=""))
     return error is None, error
+
+
+BACKUP_TIMEOUT = 30.0
+RESTORE_TIMEOUT = 60.0
+
+
+def create_backup(base):
+    """서버에 지금 백업을 만든다(서버 1.2.0+). (파일 정보 dict, 오류). 옛 서버는 REASON_MISSING."""
+    body, error = _request(base, "POST", "/backup", {}, timeout=BACKUP_TIMEOUT)
+    if error:
+        return (body if isinstance(body, dict) else None), error
+    if not isinstance(body, dict) or not body.get("name"):
+        return None, REASON_BROKEN
+    return body, None
+
+
+def list_backups(base):
+    """서버의 백업 목록(최근 30개, 새것부터). (list, 오류). 옛 서버에도 목록은 있다."""
+    body, error = _request(base, "GET", "/backup")
+    if error:
+        return None, error
+    entries = body.get("entries") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return None, REASON_BROKEN
+    return entries, None
+
+
+def restore_backup(base, name):
+    """고른 백업으로 서버 데이터를 되돌린다(서버 1.3.0+). ({restored, safety} 또는 오류 본문, 오류)."""
+    body, error = _request(base, "POST", "/backup/restore", {"name": name}, timeout=RESTORE_TIMEOUT)
+    if error:
+        return (body if isinstance(body, dict) else None), error
+    if not isinstance(body, dict) or not body.get("restored"):
+        return None, REASON_BROKEN
+    return body, None
+
+
+def login(base, password):
+    """편집 암호 확인. (토큰 또는 "", 오류) — 서버에 암호가 없으면 ("", None). 옛 서버는 REASON_MISSING."""
+    body, error = _request(base, "POST", "/auth/login", {"password": password})
+    if error:
+        return None, error
+    if not isinstance(body, dict):
+        return None, REASON_BROKEN
+    return str(body.get("token") or ""), None
+
+
+def change_password(base, current, new):
+    """편집 암호를 정하거나 바꾼다(new가 비면 해제). (토큰 또는 "", 오류)."""
+    body, error = _request(base, "POST", "/auth/password", {"current": current, "new": new})
+    if error:
+        return None, error
+    if not isinstance(body, dict):
+        return None, REASON_BROKEN
+    return str(body.get("token") or ""), None

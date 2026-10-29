@@ -19,6 +19,7 @@ services:
       - ESTIMATE_BACKUP_ENABLED=${ESTIMATE_BACKUP_ENABLED:-1}
       - ESTIMATE_BACKUP_AT=${ESTIMATE_BACKUP_AT:-23:40}
       - ESTIMATE_BACKUP_RETENTION_DAYS=${ESTIMATE_BACKUP_RETENTION_DAYS:-30}
+      - ESTIMATE_RESET_EDIT_PASSWORD=${ESTIMATE_RESET_EDIT_PASSWORD:-0}
     volumes:
       # estimate.db 와 backup/ 이 생기는 곳. 서버 파일을 새로 덮어써도 이 폴더는 건드리지 않는다.
       - ./data:/data

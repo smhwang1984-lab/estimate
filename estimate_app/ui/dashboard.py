@@ -10,14 +10,16 @@ from datetime import datetime
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from .. import APP_TITLE, APP_VERSION
-from ..core import (datastore, display_prefs as display_prefs_store, excel_io, library, paths, remote,
+from ..core import (datastore, display_prefs as display_prefs_store, editlock, excel_io, library, paths, remote,
                     session, settings as settings_store, updater)
 from ..core.model import (create_blank_item, filter_items, find_duplicate_part_nos,
                           has_item_data, normalize_part_no)
 from ..core.pricing import calc_total_amount
 from .condition_dialog import open_condition_dialog
-from .library_dialog import open_library_dialog
+from .library_dialog import open_library_dialog, save_single_card
 from .new_items_dialog import open_new_items_dialog
+from .password_dialog import unlock as unlock_edit
+from .restore_dialog import open_restore_dialog
 from .popup import open_item_popup
 from .settings_dialog import open_settings_dialog
 from .sync import SyncManager
@@ -179,6 +181,8 @@ class EstimateApp:
         current = self.library_current
         if not current:
             return True
+        if not self.can_edit():
+            return True   # v1.7.0: 읽기 전용 PC는 서버에 쓰지 않는다(쓰면 암호 없이 덮어쓰는 셈이다)
         title = str(current.get("title") or "").strip()
         path = str(current.get("path") or "").strip()
         if not title or not path:
@@ -275,8 +279,15 @@ class EstimateApp:
         self._tool_button(left, "선택 삭제", self.delete_selected_items, "ToolDanger.TButton")
         self._tool_separator(left)
         self._tool_button(left, "가공조건 산출기", self.open_condition_dialog)
+        self._tool_separator(left)
+        self._tool_button(left, "데이터 백업", self.backup_now)
+        self._tool_button(left, "백업에서 복원", self.restore_backup)
         right = tk.Frame(bar, bg=c["panel"])
         right.pack(side=tk.RIGHT)
+        # v1.7.0: 서버에 편집 암호가 걸려 있을 때만 보이는 잠금 단추(읽기 전용 / 편집 가능).
+        self.edit_slot = tk.Frame(right, bg=c["panel"])
+        self.edit_slot.pack(side=tk.LEFT)
+        self._paint_edit_button()
         theme_label = "☀ 라이트 모드" if self.theme.mode == "light" else "🌙 다크 모드"
         self._tool_button(right, theme_label, self.toggle_theme_mode)
         self._tool_button(right, "설정", self.open_settings)
@@ -427,7 +438,106 @@ class EstimateApp:
     # ---------- 견적 보관함 (v0.1.4) ----------
 
     def open_library(self, mode):
-        open_library_dialog(self, mode)
+        # v1.7.0: 저장카드는 하나 -- 저장은 창 없이 바로, 불러오기만 목록 창을 연다.
+        if mode == "save":
+            save_single_card(self)
+        else:
+            open_library_dialog(self, mode)
+
+    # ---------- 편집 권한 (v1.7.0) ----------
+
+    def can_edit(self):
+        """수정·입력을 해도 되는가. 로컬 모드나 암호가 없는 서버는 항상 True, 암호가 걸린 서버는
+        암호를 입력한 PC만 True. 화면의 모든 수정·저장·삭제 입구가 이 값을 먼저 본다."""
+        return (not datastore.location_is_server()) or editlock.can_edit()
+
+    def require_edit(self, action="이 작업", parent=None):
+        """수정 입구에서 부른다. 읽기 전용이면 안내하고 암호를 물어, 편집 권한을 얻었을 때만 True."""
+        if self.can_edit():
+            return True
+        parent = parent or self.root
+        if messagebox.askyesno(
+                "읽기 전용",
+                f"{action}은(는) 편집 암호를 입력한 PC에서만 할 수 있습니다.\n\n"
+                f"지금 편집 암호를 입력할까요?", parent=parent):
+            return unlock_edit(self, parent) and self.can_edit()
+        return False
+
+    def toggle_edit_lock(self):
+        if not self.can_edit():
+            unlock_edit(self)
+            return
+        if self.library_dirty() and not messagebox.askyesno(
+                "편집 잠그기",
+                "아직 서버에 저장되지 않은 변경이 있습니다.\n잠그면 이 변경은 서버에 올라가지 않습니다. 잠글까요?",
+                default="no"):
+            return
+        editlock.clear_token()
+        self.update_edit_ui()
+        self.show_notice("🔒 읽기 전용으로 전환했습니다.", "info", auto_hide=True)
+
+    def _paint_edit_button(self):
+        slot = getattr(self, "edit_slot", None)
+        if slot is None or not slot.winfo_exists():
+            return
+        for child in slot.winfo_children():
+            child.destroy()
+        if not (datastore.location_is_server() and editlock.is_protected()):
+            return
+        if self.can_edit():
+            text, style = "🔓 편집 가능 (잠그기)", "Tool.TButton"
+        else:
+            text, style = "🔒 읽기 전용 (암호 입력)", "ToolPrimary.TButton"
+        ttk.Button(slot, text=text, command=self.toggle_edit_lock, style=style).pack(side=tk.LEFT, padx=1)
+
+    def update_edit_ui(self):
+        """권한 상태가 바뀌었을 때(암호 입력·잠금·다른 PC의 암호 변경) 단추와 상태 표시줄을 갱신한다."""
+        self._paint_edit_button()
+        self.update_summary_text()
+
+    # ---------- 데이터 백업 (v1.7.0) ----------
+
+    def backup_now(self):
+        """[데이터 백업] 단추. 서버에 백업 파일을 만들고 결과를 동기화 줄에 알린다."""
+        if getattr(self, "backup_running", False):
+            return
+        if not self.require_edit("데이터 백업"):
+            return
+        if not datastore.location_is_server():
+            messagebox.showinfo(
+                "서버 연결 필요",
+                "데이터 백업은 견적 서버에 연결했을 때 쓸 수 있습니다.\n\n"
+                "[설정 > 데이터 위치]에서 서버 주소를 지정해 주세요.", parent=self.root)
+            return
+        self.backup_running = True
+        self.show_notice("데이터 백업 만드는 중…", "info")
+        base = datastore.get_data_dir()
+        box = []
+
+        def work():
+            box.append(remote.create_backup(base))
+
+        threading.Thread(target=work, daemon=True, name="estimate-backup").start()
+        self.root.after(150, lambda: self._finish_backup(box))
+
+    def restore_backup(self):
+        """[백업에서 복원] 단추. 서버의 백업 목록에서 시점을 골라 서버 데이터를 되돌린다(v1.8.0)."""
+        open_restore_dialog(self)
+
+    def _finish_backup(self, box):
+        if not box:
+            self.root.after(150, lambda: self._finish_backup(box))
+            return
+        self.backup_running = False
+        info, error = box[0]
+        if error is None:
+            kb = max(1, int(info.get("size", 0)) // 1024)
+            self.show_notice(f"✓ 백업 완료 {str(info.get('created_at', ''))[11:19]} — "
+                             f"{info['name']} ({kb:,}KB, 서버 backup 폴더)", "success", auto_hide=True)
+        elif error == remote.REASON_MISSING:
+            self.show_notice("백업 실패 — 서버 버전이 낮습니다. 서버를 1.2.0 이상으로 올려 주세요.", "danger", auto_hide=True)
+        else:
+            self.show_notice("백업 실패 — 서버에 연결하지 못했거나 서버가 백업을 만들지 못했습니다.", "danger", auto_hide=True)
 
     # ---------- 동기화 알림 줄 / 보관함 참조 (v1.4.0) ----------
 
@@ -732,6 +842,8 @@ class EstimateApp:
             self.data_state = state
         place = "견적 서버" if state.get("server") else "공유 폴더"
         right = []
+        if state.get("server") and editlock.is_protected():
+            right.append("🔓 편집 가능" if editlock.can_edit() else "🔒 읽기 전용")
         if getattr(self, "settings_loading", False):
             right.append("공유 설정 확인 중")
         elif state["shared"]:
@@ -847,6 +959,8 @@ class EstimateApp:
         self.open_new_items(add_immediately=True)
 
     def open_new_items(self, add_immediately=False):
+        if not self.require_edit("신규품목 입력"):
+            return
         open_new_items_dialog(self, add_immediately=add_immediately)
 
     def open_popup(self, no):
@@ -859,6 +973,8 @@ class EstimateApp:
     # ---------- 삭제 / 되돌리기 (v0.1.2) ----------
 
     def delete_selected_items(self):
+        if not self.require_edit("항목 삭제"):
+            return
         if not self.selected_nos:
             messagebox.showinfo("선택 없음", "삭제할 항목을 먼저 선택하세요.")
             return
@@ -900,6 +1016,8 @@ class EstimateApp:
         부근), 그 카드가 app.data에서 먼저 빠지면 저장을 눌러도 오류 없이 조용히
         사라진다. 부분 삭제도 하지 않는다 -- 막힌 게 있으면 전부 취소한다.
         """
+        if not self.require_edit("항목 삭제"):
+            return
         nos = set(nos)
         index_by_id = {id(row): idx for idx, row in enumerate(self.data)}
         targets = [item for item in self.data if item["no"] in nos]
@@ -950,6 +1068,8 @@ class EstimateApp:
         되고, 나중에 새 경로가 추가돼도 안전하다.
         """
         if not self.last_deleted:
+            return
+        if not self.require_edit("삭제 되돌리기"):
             return
         current_nos = {row["no"] for row in self.data}
         if any(entry["item"]["no"] in current_nos for entry in self.last_deleted):

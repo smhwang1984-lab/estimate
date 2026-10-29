@@ -6,7 +6,7 @@ TSERP 서버와는 코드·DB·컨테이너·버전을 하나도 공유하지 �
 import ipaddress
 import os
 
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.3.0"
 # 클라이언트가 /health에서 이 값을 보고 자기와 맞는 서버인지 판단한다. 요청·응답 형식을
 # 호환되지 않게 바꿀 때만 올린다(클라이언트 core/remote.py의 API_VERSION과 짝).
 API_VERSION = 1
@@ -25,6 +25,9 @@ BACKUP_AT = str(os.environ.get("ESTIMATE_BACKUP_AT", "23:40")).strip()
 BACKUP_RETENTION_DAYS = int(os.environ.get("ESTIMATE_BACKUP_RETENTION_DAYS", "30") or 30)
 
 TITLE_MAX = 120
+
+# 편집 암호를 잊었을 때: .env에 1을 적고 컨테이너를 다시 띄우면 시작할 때 암호를 지운다(DEPLOY_Synology.md 5).
+RESET_EDIT_PASSWORD = str(os.environ.get("ESTIMATE_RESET_EDIT_PASSWORD", "0")).strip() in ("1", "true", "True")
 
 
 def allowed_networks():
