@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from estimate_server import app as app_module
-from estimate_server import backup, config, store
+from estimate_server import auth as auth_module, backup, config, store
 
 LAN = ("192.168.0.25", 50000)
 
@@ -230,3 +230,147 @@ def test_changes_wakes_up_on_write(data_dir):
 def test_changes_blocked_outside_lan(data_dir):
     with make_client(("8.8.8.8", 1)) as c:
         assert c.get("/changes").status_code == 403
+
+
+def test_manual_backup_endpoint_and_list(client, data_dir):
+    client.put(url("A"), json={"payload": payload(), "base_mtime": None})
+    res = client.post("/backup")
+    assert res.status_code == 200
+    info = res.json()
+    assert info["ok"] and info["name"].startswith("manual_") and info["size"] > 0 and info["kind"] == "manual"
+    path = os.path.join(config.backup_dir(), info["name"])
+    snap = sqlite3.connect(path)
+    try:
+        assert snap.execute("select count(*) from sqlite_master").fetchone()[0] > 0
+    finally:
+        snap.close()
+    names = [e["name"] for e in client.get("/backup").json()["entries"]]
+    assert info["name"] in names
+
+
+def test_manual_backup_prune_keeps_latest_and_spares_auto(client, data_dir, monkeypatch):
+    monkeypatch.setattr(backup, "MANUAL_KEEP", 3)
+    directory = config.backup_dir()
+    os.makedirs(directory, exist_ok=True)
+    for i in range(5):
+        open(os.path.join(directory, f"manual_2000010{i}_000000.db"), "wb").close()
+    auto = os.path.join(directory, "estimate_20000101_000000.db")
+    open(auto, "wb").close()
+    client.post("/backup")
+    manual = sorted(n for n in os.listdir(directory) if n.startswith("manual_"))
+    assert len(manual) == 3 and "manual_20000100_000000.db" not in manual
+    assert os.path.exists(auto)
+
+
+def test_backup_blocked_outside_lan(data_dir):
+    with make_client(("8.8.8.8", 50000)) as outsider:
+        assert outsider.post("/backup").status_code == 403
+        assert outsider.get("/backup").status_code == 403
+
+
+# ---------- 편집 암호 (v1.2.0) ----------
+
+def set_pw(client, new, current=""):
+    return client.post("/auth/password", json={"current": current, "new": new})
+
+
+def test_no_password_means_open_as_before(client):
+    assert client.get("/auth/status").json()["protected"] is False
+    assert client.get("/health").json()["edit_protected"] is False
+    assert client.put(url("A"), json={"payload": payload(), "base_mtime": None}).status_code == 200
+    assert client.post("/backup").status_code == 200
+
+
+def test_password_blocks_writes_but_not_reads(client):
+    client.put(url("A"), json={"payload": payload(), "base_mtime": None})
+    res = set_pw(client, "1234")
+    assert res.status_code == 200 and res.json()["token"]
+    token = res.json()["token"]
+    assert client.get("/health").json()["edit_protected"] is True
+    # 읽기는 그대로
+    assert client.get("/estimates").status_code == 200
+    assert client.get(url("A")).status_code == 200
+    assert client.get("/settings").status_code == 200
+    assert client.get("/changes").status_code == 200
+    assert client.get("/backup").status_code == 200
+    # 쓰기는 토큰이 없으면 401
+    body = {"payload": payload(), "base_mtime": None}
+    assert client.put(url("B"), json=body).status_code == 401
+    assert client.put(url("A"), json=body, headers={"X-Edit-Token": "wrong"}).status_code == 401
+    assert client.delete(url("A")).status_code == 401
+    assert client.put("/settings", json={"settings": {"x": 1}}).status_code == 401
+    assert client.post("/backup").status_code == 401
+    # 토큰이 있으면 통과
+    h = {"X-Edit-Token": token}
+    assert client.put(url("B"), json=body, headers=h).status_code == 200
+    assert client.put("/settings", json={"settings": {"x": 1}}, headers=h).status_code == 200
+    assert client.post("/backup", headers=h).status_code == 200
+    assert client.delete(url("B"), headers=h).status_code == 200
+
+
+def test_login_and_token_survives_restart(data_dir):
+    with make_client() as c:
+        token = set_pw(c, "pass1").json()["token"]
+        assert c.post("/auth/login", json={"password": "pass1"}).json()["token"] == token
+        bad = c.post("/auth/login", json={"password": "nope"})
+        assert bad.status_code == 401 and bad.json()["reason"] == "bad_password"
+    with make_client() as c:   # 서버 재시작과 같다(캐시 초기화)
+        assert c.get("/auth/status").json()["protected"] is True
+        assert c.put(url("A"), json={"payload": payload(), "base_mtime": None},
+                     headers={"X-Edit-Token": token}).status_code == 200
+
+
+def test_hash_only_stored_and_change_invalidates_token(client, data_dir):
+    old = set_pw(client, "secret-pw").json()["token"]
+    raw = sqlite3.connect(config.db_path()).execute(
+        "select value from meta where key='edit_password'").fetchone()[0]
+    assert "secret-pw" not in raw and raw.startswith("pbkdf2$")
+    assert set_pw(client, "newpass", current="wrong").status_code == 401
+    new = set_pw(client, "newpass", current="secret-pw").json()["token"]
+    assert new != old
+    body = {"payload": payload(), "base_mtime": None}
+    assert client.put(url("A"), json=body, headers={"X-Edit-Token": old}).status_code == 401
+    assert client.put(url("A"), json=body, headers={"X-Edit-Token": new}).status_code == 200
+
+
+def test_clear_password_reopens(client):
+    set_pw(client, "abcd")
+    assert set_pw(client, "", current="zzzz").status_code == 401
+    assert set_pw(client, "", current="abcd").json()["protected"] is False
+    assert client.put(url("A"), json={"payload": payload(), "base_mtime": None}).status_code == 200
+
+
+def test_password_rules_and_throttle(client):
+    assert set_pw(client, "abc").status_code == 400          # 4자 미만
+    set_pw(client, "abcd")
+    for _ in range(5):
+        assert client.post("/auth/login", json={"password": "bad"}).status_code == 401
+    blocked = client.post("/auth/login", json={"password": "abcd"})   # 맞는 암호도 잠시 막는다
+    assert blocked.status_code == 429
+
+
+def test_auth_routes_blocked_outside_lan(data_dir):
+    with make_client(("8.8.8.8", 50000)) as outsider:
+        assert outsider.post("/auth/login", json={"password": "x"}).status_code == 403
+        assert outsider.post("/auth/password", json={"new": "abcd"}).status_code == 403
+
+
+def test_changes_reports_protection_and_changes_token(client):
+    before = client.get("/changes").json()
+    assert before["protected"] is False and before["edit_rev"] == ""
+    token = set_pw(client, "abcd").json()["token"]
+    after = client.get("/changes").json()
+    assert after["protected"] is True and after["token"] != before["token"]
+    assert after["edit_rev"] == auth_module.edit_rev(token)
+    other = set_pw(client, "efgh", current="abcd").json()["token"]
+    assert client.get("/changes").json()["edit_rev"] == auth_module.edit_rev(other) != after["edit_rev"]
+
+
+def test_reset_env_clears_password_on_startup(data_dir, monkeypatch):
+    with make_client() as c:
+        set_pw(c, "abcd")
+        assert c.get("/auth/status").json()["protected"] is True
+    monkeypatch.setattr(config, "RESET_EDIT_PASSWORD", True)
+    with make_client() as c:
+        assert c.get("/auth/status").json()["protected"] is False
+        assert c.put(url("A"), json={"payload": payload(), "base_mtime": None}).status_code == 200

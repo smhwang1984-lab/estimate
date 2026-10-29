@@ -16,6 +16,9 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from ..core import editlock
+from .password_dialog import open_password_settings
+
 from ..core import config, datastore, display_prefs as display_prefs_store, remote, settings as settings_store
 from ..core.model import parse_number
 
@@ -487,6 +490,33 @@ def _build_location_tab(notebook, app, dialog):
                    " 예전 견적은 서버로 옮긴 뒤 [견적 불러오기 > 폴더에서 서버로 올리기]로 옮길 수 있습니다."
               ).pack(anchor="w", pady=(10, 0))
 
+    # v1.7.0: 편집 암호(서버 모드). 암호를 아는 PC만 수정·입력, 나머지는 읽기 전용.
+    lock_box = ttk.LabelFrame(tab, text="편집 암호 (서버)", padding=12)
+    lock_box.pack(fill=tk.X, pady=(18, 0))
+    lock_row = ttk.Frame(lock_box)
+    lock_row.pack(fill=tk.X)
+    lock_var = tk.StringVar()
+    ttk.Label(lock_row, textvariable=lock_var).pack(side=tk.LEFT)
+
+    def paint_lock_status():
+        if not datastore.location_is_server():
+            lock_var.set("견적 서버를 쓸 때만 설정할 수 있습니다.")
+        elif editlock.is_protected():
+            lock_var.set("암호 사용 중 — 이 PC: " + ("편집 가능" if editlock.can_edit() else "읽기 전용"))
+        else:
+            lock_var.set("암호 없음 — 모든 PC가 수정할 수 있습니다.")
+
+    def open_lock_dialog():
+        open_password_settings(app, dialog)
+        paint_lock_status()
+
+    ttk.Button(lock_row, text="편집 암호 설정/변경", command=open_lock_dialog).pack(side=tk.RIGHT)
+    paint_lock_status()
+    ttk.Label(lock_box, style="Muted.TLabel", wraplength=720, justify="left",
+              text="암호를 정하면 암호를 입력한 PC에서만 견적 저장·삭제·신규품목·설정 변경·백업을 할 수 있고,"
+                   " 나머지 PC는 읽기 전용(조회·엑셀 출력 가능)입니다. 입력한 권한은 프로그램을 끌 때까지 유지됩니다."
+              ).pack(anchor="w", pady=(10, 0))
+
     ttk.Label(tab, style="Muted.TLabel", wraplength=760, justify="left",
               text="작업 중인 카드 목록(자동 저장)과 업데이트 기록은 공유하지 않고 PC마다 따로 둡니다."
                    " 자동 저장은 물어보지 않고 덮어쓰기 때문에, 두 사람이 같이 켜 두면 나중에 끈"
@@ -817,6 +847,8 @@ def open_settings_dialog(app):
         return {"name": name, "power": power, "max_rpm": max_rpm}
 
     def save_and_close():
+        if not app.require_edit("설정 저장", parent=dialog):
+            return
         rates = {}
         for key, label in machine_fields:
             value = parse_number(rate_vars[key].get())

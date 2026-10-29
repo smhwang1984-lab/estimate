@@ -121,6 +121,25 @@ def check_db():
         return False
 
 
+# ---------- 메타(편집 암호 등) ----------
+
+def get_meta(key):
+    with closing(connect()) as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_meta(key, value):
+    with closing(connect()) as conn:
+        conn.execute("INSERT INTO meta (key, value) VALUES (?, ?)"
+                     " ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
+
+def delete_meta(key):
+    with closing(connect()) as conn:
+        conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+
+
 # ---------- 설정 ----------
 
 def get_settings():

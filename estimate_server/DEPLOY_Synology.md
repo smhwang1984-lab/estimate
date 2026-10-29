@@ -52,7 +52,7 @@ estimate_server/
 **방법 B — SSH**
 ```bash
 cd /volume1/docker/estimate_server
-sudo docker compose up -d --build
+sudo /usr/local/bin/docker-compose up -d --build
 sudo docker logs -f estimate-api      # Ctrl+C로 빠져나온다
 ```
 
@@ -116,15 +116,29 @@ VPN(Tailscale)으로 접속한 PC에서는 `forbidden`이 나와야 정상이다
 
 **Hyper Backup 대상에 `/docker/estimate_server/data` 를 추가해 두기를 권한다** (이중 보관).
 
+### 4-1-1. 화면의 [데이터 백업] 단추 (서버 1.2.0+, 프로그램 1.7.0+)
+
+프로그램 도구 모음의 **[데이터 백업]** 을 누르면 그 순간의 스냅샷이 `data/backup/manual_YYYYMMDD_HHMMSS.db`
+로 생긴다. 새 폴더를 만들 필요는 없다(`data/backup/`은 서버가 알아서 만든다). 수동 백업은 날짜로 지우지 않고
+**최근 50개**만 남긴다. 자동 백업(`estimate_…`)과 같은 폴더·같은 형식이라 4-2의 복구 절차를 그대로 쓴다
+(복사할 파일 이름만 `manual_…`로).
+
+### 4-1-2. 편집 암호 (서버 1.2.0+, 프로그램 1.7.0+)
+
+프로그램의 [설정 > 데이터 위치 > 편집 암호]에서 정한다. 암호를 정하면 암호를 입력한 PC에서만 견적 저장·삭제·
+신규품목·설정 변경·백업이 되고, 나머지 PC는 읽기 전용(조회·엑셀 출력 가능)이다. 암호는 DB의 `meta` 표에
+PBKDF2 해시로만 저장된다. 이 암호가 걸리면 서버가 쓰기 요청을 직접 거절하므로(401), 프로그램을 고쳐 쓰거나 다른
+도구로 접속해도 암호 없이는 쓸 수 없다. 암호가 없으면(기본값) 예전처럼 사내망 누구나 쓴다.
+
 ### 4-2. 복구 (DB를 특정 날짜로 되돌리기)
 
 ```bash
 cd /volume1/docker/estimate_server
-sudo docker compose stop
+sudo /usr/local/bin/docker-compose stop
 sudo mv data/estimate.db data/estimate.db.broken_$(date +%Y%m%d)
 sudo rm -f data/estimate.db-wal data/estimate.db-shm
 sudo cp data/backup/estimate_YYYYMMDD_HHMMSS.db data/estimate.db
-sudo docker compose start
+sudo /usr/local/bin/docker-compose start
 ```
 
 ### 4-3. 지운 견적 되살리기
@@ -152,7 +166,7 @@ sudo docker exec estimate-api python -c "import sqlite3; c=sqlite3.connect('/dat
 1. 새 서버 ZIP을 **`data/`와 `.env`를 건드리지 않고** 덮어쓴다(ZIP에는 둘 다 들어 있지 않다).
 2. 다시 빌드·재시작:
    - Container Manager: 프로젝트 → `estimate_server` → **빌드** (또는 정지 → 빌드 → 시작)
-   - SSH: `sudo docker compose up -d --build`
+   - SSH: `sudo /usr/local/bin/docker-compose up -d --build`
 3. 2번 동작 확인(`/health`의 `server_version`이 새 버전인지).
 
 API 버전(`api_version`)이 바뀌는 업데이트면 프로그램도 같이 올려야 한다 — 맞지 않는 버전은
@@ -169,3 +183,18 @@ API 버전(`api_version`)이 바뀌는 업데이트면 프로그램도 같이 �
   넘치면 기다리지 않고 바로 답한다 — 그 PC들은 몇 초 간격 확인으로 내려앉을 뿐 멈추지 않는다.
 - 업데이트 후 확인: `/health`의 `server_version`이 `1.1.0`이고, 브라우저에서
   `http://<NAS>:8100/changes`를 열면 `{"ok":true,"token":"…",…}`가 나온다.
+
+---
+
+## 5. 편집 암호를 잊었을 때
+
+NAS의 `/volume1/docker/estimate_server/.env`에 `ESTIMATE_RESET_EDIT_PASSWORD=1`을 적고 컨테이너를 다시 띄운다.
+
+```bash
+cd /volume1/docker/estimate_server
+sudo /usr/local/bin/docker-compose up -d --force-recreate
+```
+
+시작할 때 편집 암호가 지워지고(모든 PC가 편집 가능) 로그에 `edit password cleared`가 찍힌다. **곧바로 `.env`를
+`ESTIMATE_RESET_EDIT_PASSWORD=0`으로 되돌리고 한 번 더 `up -d --force-recreate` 한 뒤**, 프로그램에서 새 암호를 정한다
+(안 그러면 컨테이너가 재시작할 때마다 암호가 지워진다).
