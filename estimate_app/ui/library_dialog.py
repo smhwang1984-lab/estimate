@@ -343,7 +343,7 @@ def open_library_dialog(app, mode="load"):
     app.root.wait_window(dialog)
 
 
-SINGLE_CARD_TITLE = "견적"   # v1.7.0: 저장카드는 하나. 이름을 묻지 않고 항상 이 견적에 덮어쓴다.
+SINGLE_CARD_TITLE = library.SINGLE_CARD_TITLE   # v1.7.0: 저장카드는 하나. 이름을 묻지 않고 항상 이 견적에 덮어쓴다.
 
 
 def save_single_card(app):

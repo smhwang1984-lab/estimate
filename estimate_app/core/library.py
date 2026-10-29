@@ -117,6 +117,9 @@ def get_last_error():
     return _last_error
 
 
+SINGLE_CARD_TITLE = "견적"   # v1.7.0: 저장카드는 하나. [견적 저장]은 항상 이 견적에 덮어쓰고, 다른 PC는 이것을 따라간다.
+
+
 def entry_path(title):
     if datastore.is_server():
         return SERVER_PREFIX + sanitize_title(title)
