@@ -1,7 +1,7 @@
 # Estimate(견적) 인수인계서
 
 이 문서 하나만 읽고도 다른 에이전트(Codex 등)나 사람이 곧바로 작업을 이어받을 수 있도록
-정리한 것이다. 마지막 갱신은 **v1.8.0 (2026-10-29, 백업에서 복원)** 기준이다.
+정리한 것이다. 마지막 갱신은 **v1.9.0 (2026-10-29, 도구 모음 아이콘)** 기준이다.
 v1.3.0에서 바뀐 것은 맨 끝 "v1.3.0 견적 서버" 절에 모아 두었다.
 
 > **읽는 순서**
@@ -39,11 +39,11 @@ Windows 데스크톱 프로그램이다. 실무 사용자는 생산부장 1명 �
 
 | 항목 | 값 |
 |---|---|
-| 버전 | 프로그램 v1.8.0 / 견적 서버 1.3.0 (API 1) |
+| 버전 | 프로그램 v1.9.0 / 견적 서버 1.3.0 (API 1) |
 | 브랜치 | `feature/server-api` (`Estimate`에서 분기) — **`Estimate`·`main`에 미병합** |
 | 원격 | `origin` = `https://github.com/smhwang1984-lab/estimate.git` |
 | 주 개발 브랜치 | `Estimate` (기본 브랜치는 `main`이지만 실제 작업은 `Estimate`에서 해 왔다) |
-| 설치 파일 | `installer\Output\MachineEstimate_Setup_v1.8.0.exe`, 서버 `installer\Output\estimate_server_v1.3.0.zip` |
+| 설치 파일 | `installer\Output\MachineEstimate_Setup_v1.9.0.exe`, 서버 `installer\Output\estimate_server_v1.3.0.zip` |
 | Python | 3.14 / openpyxl 3.1.5 / **PyInstaller 6.22.3** (6.21은 Tcl/Tk 9 Python에서 실행 불가 — 아래 v1.3.0 절) |
 | 서버 Python | 3.12 (Docker `python:3.12-slim`) / fastapi 0.115.6 / uvicorn 0.34.0 / pydantic 2.10.4 / SQLite 내장 |
 | 빌드 형태 | onedir (`dist\Estimate\Estimate.exe` + `_internal\`) |
@@ -531,6 +531,17 @@ v0.1.1의 **가공조건 산출기는 카드를 읽기만 한다**는 것도 기
 크면 `_shrink_to_fit`으로 모든 열을 여유 폭(현재 폭 − 최소 40px) 비율로 줄인다. 남으면 기존대로 품명·Comment가
 나눠 갖는다. 최소 폭까지 줄여도 모자란 극단적으로 좁은 창에서만 가로 스크롤바가 나온다(기본 최소 창 1000px에서는
 안 나온다). 저장된 열 폭 설정·열 폭 끌기 규칙은 그대로다. 화면 테스트 36/36(좁은 창·넓은 창 추가).
+
+## v1.9.0 도구 모음 아이콘 (2026-10-29, 서버 변경 없음 1.3.0)
+
+- 도구 모음 단추를 **위에 선형 아이콘, 아래에 글자** 형태로 바꿨다(`ui/toolbar.py`의 `ToolButton`, Canvas). 아이콘은 그림 파일이 아니라
+  24×24 격자로 선을 직접 그려(`ICONS` 표: open·save·download·new·select_all·deselect·trash·calculator·database·history·sun·moon·gear·lock·unlock)
+  테마 글자색을 그대로 따른다 — 라이트/다크 전환은 대시보드를 다시 지으므로 색이 같이 바뀐다. 단추 크기는 `ICON_PX`(22)·`PAD_*` 상수로 조정한다
+  (높이 약 49px, 예전 약 30px). 종류: normal / primary(견적 저장·읽기 전용 잠금, 강조 배경) / danger(선택 삭제, 붉은 글씨).
+- `ToolButton`은 `ttk.Button`이 아니라 Canvas라서 `cget("text")`·`set(text=, icon=)`·`invoke()`를 직접 제공한다(잠금 단추를 글자로 보는 e2e가 쓴다).
+  잠금 단추의 이모지(🔒🔓)는 아이콘으로 바뀌었고 글자는 '읽기 전용 (암호 입력)' / '편집 가능 (잠그기)' 그대로. 상태 표시줄의 글자는 그대로.
+- 검색줄의 [초기화]와 대화상자 단추는 바꾸지 않았다. 기능·단축키·동작은 그대로.
+- 테스트: 화면 36/36, 잠금 31/31, 복원 23/23, 동기화 24/24, 백업 13/13, 종료 4/4, 단추 단위(`toolbar_test.py`) 8/8.
 
 ## v1.8.0 백업에서 복원 (2026-10-29, 서버 1.3.0)
 
